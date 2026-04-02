@@ -1,5 +1,4 @@
 # Go
-/build/
 *.exe
 *.exe~
 *.out
