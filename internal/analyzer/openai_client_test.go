@@ -312,3 +312,50 @@ func TestOpenAIClientParsesDeepSeekStyleToolCallPayload(t *testing.T) {
 		t.Fatalf("unexpected parsed path: %s", args.Path)
 	}
 }
+
+func TestOpenAIClientExtractsReasoningContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "choices":[
+    {
+      "message":{
+        "content":"",
+        "reasoning_content":"先定位大目录，再调用工具校验内容。",
+        "tool_calls":[
+          {
+            "function":{
+              "name":"scan_deeper",
+              "arguments":"{\"path\":\"D:/temp\",\"depth\":2}"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usage":{"prompt_tokens":6,"completion_tokens":2,"total_tokens":8}
+}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Tools:  DefaultToolDefinitions(),
+		Config: models.LLMConfig{
+			APIKey:  "k",
+			BaseURL: server.URL,
+			Model:   "m",
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if strings.TrimSpace(resp.Reasoning) == "" {
+		t.Fatalf("expected reasoning to be extracted")
+	}
+	if !strings.Contains(resp.Reasoning, "先定位大目录") {
+		t.Fatalf("unexpected reasoning: %s", resp.Reasoning)
+	}
+}

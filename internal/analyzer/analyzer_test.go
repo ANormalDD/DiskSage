@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,6 +251,7 @@ func TestAnalyzerEmitsToolCallProgress(t *testing.T) {
 	client := &sequenceClient{
 		responses: []LLMResponse{
 			{
+				Reasoning: "先检查目录内容，再给建议",
 				ToolCalls: []ToolCall{{
 					Name:      ToolCheckDirContent,
 					Arguments: []byte(`{"path":"D:/payload"}`),
@@ -286,14 +288,27 @@ func TestAnalyzerEmitsToolCallProgress(t *testing.T) {
 	}
 
 	found := false
+	foundToolResult := false
+	foundReasoning := false
 	for _, event := range events {
-		if event.Type == "tool_call" && event.Tool == ToolCheckDirContent && event.Path == "D:/payload" {
+		if event.Type == "reasoning" && strings.Contains(event.Reason, "先检查目录内容") {
+			foundReasoning = true
+		}
+		if event.Type == "tool_call" && event.Tool == ToolCheckDirContent && event.Path == "D:/payload" && strings.Contains(event.Input, "D:/payload") {
 			found = true
-			break
+		}
+		if event.Type == "tool_result" && event.Tool == ToolCheckDirContent && event.Path == "D:/payload" && strings.Contains(event.Output, "D:/payload") {
+			foundToolResult = true
 		}
 	}
 	if !found {
 		t.Fatalf("expected tool_call event with path, got %+v", events)
+	}
+	if !foundToolResult {
+		t.Fatalf("expected tool_result event with output, got %+v", events)
+	}
+	if !foundReasoning {
+		t.Fatalf("expected reasoning event, got %+v", events)
 	}
 }
 

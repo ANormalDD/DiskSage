@@ -29,6 +29,9 @@ export interface AnalyzeProgressEvent {
   tool: string;
   path: string;
   content: string;
+  reason: string;
+  input: string;
+  output: string;
   at: string;
 }
 

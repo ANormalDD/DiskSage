@@ -297,6 +297,9 @@ export function subscribeAnalyzeProgress(onProgress: (event: AnalyzeProgressEven
       tool: payload?.Tool ?? payload?.tool ?? "",
       path: payload?.Path ?? payload?.path ?? "",
       content: payload?.Content ?? payload?.content ?? "",
+      reason: payload?.Reason ?? payload?.reason ?? "",
+      input: payload?.Input ?? payload?.input ?? "",
+      output: payload?.Output ?? payload?.output ?? "",
       at: payload?.At ?? payload?.at ?? "",
     };
     onProgress(event);

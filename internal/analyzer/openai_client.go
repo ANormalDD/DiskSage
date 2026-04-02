@@ -84,17 +84,18 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, req LLMRequest) (
 	message := asMap(firstChoice["message"])
 
 	content := extractContent(message["content"])
+	reasoning := extractReasoning(message)
 	toolCalls := extractToolCalls(message)
 	usage := extractUsage(decoded["usage"])
 
 	if len(toolCalls) > 0 {
-		return LLMResponse{ToolCalls: toolCalls, Content: content, RawResponse: string(raw), Usage: usage}, nil
+		return LLMResponse{ToolCalls: toolCalls, Content: content, Reasoning: reasoning, RawResponse: string(raw), Usage: usage}, nil
 	}
 	recs, err := ParseRecommendations(content)
 	if err == nil {
-		return LLMResponse{Recommendations: recs, Content: content, RawResponse: string(raw), Usage: usage}, nil
+		return LLMResponse{Recommendations: recs, Content: content, Reasoning: reasoning, RawResponse: string(raw), Usage: usage}, nil
 	}
-	return LLMResponse{Content: content, RawResponse: string(raw), Usage: usage}, nil
+	return LLMResponse{Content: content, Reasoning: reasoning, RawResponse: string(raw), Usage: usage}, nil
 }
 
 func asMap(v any) map[string]any {
@@ -141,6 +142,20 @@ func extractContent(v any) string {
 	switch content := v.(type) {
 	case string:
 		return content
+	case map[string]any:
+		if txt := strings.TrimSpace(asString(content["text"])); txt != "" {
+			return txt
+		}
+		if txt := strings.TrimSpace(asString(content["content"])); txt != "" {
+			return txt
+		}
+		if txt := strings.TrimSpace(asString(content["reasoning"])); txt != "" {
+			return txt
+		}
+		if txt := strings.TrimSpace(asString(content["reasoning_content"])); txt != "" {
+			return txt
+		}
+		return ""
 	case []any:
 		parts := make([]string, 0, len(content))
 		for _, part := range content {
@@ -163,6 +178,46 @@ func extractContent(v any) string {
 	default:
 		return ""
 	}
+}
+
+func extractReasoning(message map[string]any) string {
+	parts := make([]string, 0, 8)
+	parts = appendUniqueText(parts, extractContent(message["reasoning"]))
+	parts = appendUniqueText(parts, extractContent(message["reasoning_content"]))
+
+	for _, part := range asSlice(message["content"]) {
+		p := asMap(part)
+		if len(p) == 0 {
+			continue
+		}
+
+		partType := strings.ToLower(strings.TrimSpace(asString(p["type"])))
+		if partType == "reasoning" || partType == "reasoning_content" || partType == "thinking" {
+			parts = appendUniqueText(parts, extractContent(p["text"]))
+			parts = appendUniqueText(parts, extractContent(p["content"]))
+			parts = appendUniqueText(parts, extractContent(p["reasoning"]))
+			parts = appendUniqueText(parts, extractContent(p["reasoning_content"]))
+			parts = appendUniqueText(parts, extractContent(p["thinking"]))
+		}
+
+		parts = appendUniqueText(parts, extractContent(p["reasoning"]))
+		parts = appendUniqueText(parts, extractContent(p["reasoning_content"]))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+func appendUniqueText(parts []string, text string) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return parts
+	}
+	for _, existing := range parts {
+		if existing == trimmed {
+			return parts
+		}
+	}
+	return append(parts, trimmed)
 }
 
 func extractToolCalls(message map[string]any) []ToolCall {

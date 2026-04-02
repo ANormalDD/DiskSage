@@ -26,6 +26,7 @@ type LLMRequest struct {
 
 type LLMResponse struct {
 	Content         string
+	Reasoning       string
 	RawResponse     string
 	ToolCalls       []ToolCall
 	Recommendations []models.Recommendation
@@ -56,6 +57,9 @@ type AnalysisProgressEvent struct {
 	Tool    string `json:"tool"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
+	Reason  string `json:"reason"`
+	Input   string `json:"input"`
+	Output  string `json:"output"`
 	At      string `json:"at"`
 }
 
@@ -297,13 +301,17 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 
 		rawResp := strings.TrimSpace(resp.RawResponse)
 		content := strings.TrimSpace(resp.Content)
+		reasoning := strings.TrimSpace(resp.Reasoning)
 		if rawResp != "" {
 			session.RawOutputs = append(session.RawOutputs, fmt.Sprintf("[turn-%d api-raw]\n%s", turn, rawResp))
 		} else if content != "" {
 			session.RawOutputs = append(session.RawOutputs, fmt.Sprintf("[turn-%d parsed-content]\n%s", turn, content))
 		}
+		if reasoning != "" {
+			a.emitProgress(AnalysisProgressEvent{Type: "reasoning", Turn: turn, Content: "模型推理", Reason: truncateProgressText(reasoning, 12000)})
+		}
 		if content != "" {
-			a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: content})
+			a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: truncateProgressText(content, 12000)})
 		}
 
 		if len(resp.Recommendations) > 0 {
@@ -324,10 +332,10 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			session.NonCompliantTurns = 0
 			session.ToolChoice = "auto"
 			for _, tc := range resp.ToolCalls {
-				a.emitProgress(AnalysisProgressEvent{Type: "tool_call", Turn: turn, Tool: tc.Name, Path: extractToolPath(tc)})
+				a.emitProgress(AnalysisProgressEvent{Type: "tool_call", Turn: turn, Tool: tc.Name, Path: extractToolPath(tc), Input: formatJSONForProgress(tc.Arguments)})
 			}
-			toolResults, submitRecs, toolErr := executeToolCalls(resp.ToolCalls, scanDeeper, checkDirContent, func(name, path string) {
-				a.emitProgress(AnalysisProgressEvent{Type: "tool_result", Turn: turn, Tool: name, Path: path})
+			toolResults, submitRecs, toolErr := executeToolCalls(resp.ToolCalls, scanDeeper, checkDirContent, func(name, path, input, output string) {
+				a.emitProgress(AnalysisProgressEvent{Type: "tool_result", Turn: turn, Tool: name, Path: path, Input: truncateProgressText(input, 12000), Output: truncateProgressText(output, 12000)})
 			})
 			if toolErr != nil {
 				if strings.Contains(strings.ToLower(toolErr.Error()), "submit_recommendations arguments invalid") {
@@ -446,6 +454,34 @@ func extractToolPath(tc ToolCall) string {
 	return path
 }
 
+func formatJSONForProgress(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return "{}"
+	}
+
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		blob, marshalErr := json.MarshalIndent(payload, "", "  ")
+		if marshalErr == nil {
+			return truncateProgressText(string(blob), 12000)
+		}
+	}
+
+	return truncateProgressText(trimmed, 12000)
+}
+
+func truncateProgressText(text string, maxLen int) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || maxLen <= 0 {
+		return trimmed
+	}
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[:maxLen] + "\n...(截断)"
+}
+
 func buildTurnUserPrompt(base string, notes []string) string {
 	if len(notes) == 0 {
 		return base
@@ -486,7 +522,7 @@ func autoProbeLargeDirs(root models.DirNode, scanDeeper func(path string, depth 
 	return results
 }
 
-func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth int) (models.DirNode, error), checkDirContent func(path string) (models.FileTypeDistribution, error), onExecuted func(name, path string)) ([]string, []models.Recommendation, error) {
+func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth int) (models.DirNode, error), checkDirContent func(path string) (models.FileTypeDistribution, error), onExecuted func(name, path, input, output string)) ([]string, []models.Recommendation, error) {
 	results := make([]string, 0, len(toolCalls))
 	for _, tc := range toolCalls {
 		switch tc.Name {
@@ -497,7 +533,7 @@ func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth i
 			}
 			if len(recs) > 0 {
 				if onExecuted != nil {
-					onExecuted(tc.Name, "")
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), fmt.Sprintf("submit_recommendations accepted %d item(s)", len(recs)))
 				}
 				return nil, recs, nil
 			}
@@ -519,10 +555,11 @@ func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth i
 			if err != nil {
 				return nil, nil, fmt.Errorf("scan_deeper failed: %w", err)
 			}
+			rendered := scanner.RenderCompressedTree(child, scanner.RenderConfig{TopNPerLevel: 20, MinChildSize: 10 * 1024 * 1024})
 			if onExecuted != nil {
-				onExecuted(tc.Name, args.Path)
+				onExecuted(tc.Name, args.Path, formatJSONForProgress(tc.Arguments), rendered)
 			}
-			results = append(results, "scan_deeper result:\n"+scanner.RenderCompressedTree(child, scanner.RenderConfig{TopNPerLevel: 20, MinChildSize: 10 * 1024 * 1024}))
+			results = append(results, "scan_deeper result:\n"+rendered)
 		case ToolCheckDirContent:
 			if checkDirContent == nil {
 				continue
@@ -537,10 +574,10 @@ func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth i
 			if err != nil {
 				return nil, nil, fmt.Errorf("check_dir_content failed: %w", err)
 			}
+			blob, _ := json.MarshalIndent(dist, "", "  ")
 			if onExecuted != nil {
-				onExecuted(tc.Name, args.Path)
+				onExecuted(tc.Name, args.Path, formatJSONForProgress(tc.Arguments), string(blob))
 			}
-			blob, _ := json.Marshal(dist)
 			results = append(results, "check_dir_content result:\n"+string(blob))
 		}
 	}
