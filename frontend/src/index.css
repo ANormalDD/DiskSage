@@ -1,15 +1,16 @@
 :root {
-  --bg: #0f1a20;
-  --bg-alt: #162730;
-  --panel: rgba(255, 255, 255, 0.06);
-  --line: rgba(255, 255, 255, 0.12);
-  --text: #eff8ff;
-  --muted: #a6c3ce;
-  --safe: #33c48d;
-  --confirm: #f2b451;
-  --manual: #58a6ff;
-  --review: #c9d2da;
-  --accent: #ff7d45;
+  --bg: #f5f7fa;
+  --bg-alt: #ffffff;
+  --panel: #ffffff;
+  --line: #e4e7ed;
+  --text: #303133;
+  --muted: #909399;
+  --safe: #20b2aa;
+  --confirm: #e6a23c;
+  --manual: #409eff;
+  --review: #c0c4cc;
+  --accent: #00b4a3;
+  --shadow: rgba(0, 0, 0, 0.04);
 }
 
 * {
@@ -21,10 +22,7 @@ body {
   min-height: 100vh;
   color: var(--text);
   font-family: "Segoe UI", "PingFang SC", "Microsoft Yahei", sans-serif;
-  background:
-    radial-gradient(circle at 15% -10%, #254352 0%, transparent 42%),
-    radial-gradient(circle at 85% 120%, #2b1d16 0%, transparent 34%),
-    linear-gradient(180deg, var(--bg) 0%, #0c1419 100%);
+  background: var(--bg);
 }
 
 #root {
@@ -60,9 +58,18 @@ body {
 .settings {
   background: var(--panel);
   border: 1px solid var(--line);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px var(--shadow);
   border-radius: 14px;
   padding: 16px;
+  transition: box-shadow 0.3s ease;
+}
+
+.summary-card:hover,
+.tree-card:hover,
+.category:hover,
+.disk-selector:hover,
+.scan-box:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
 }
 
 .error-banner {
@@ -92,9 +99,9 @@ body {
   overflow: auto;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.2);
-  color: #dce9ef;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
   white-space: pre-wrap;
 }
 
@@ -102,25 +109,39 @@ body {
   margin: 0;
   max-height: 260px;
   overflow: auto;
-  color: #dce9ef;
+  color: var(--text);
 }
 
 button {
   border: none;
   border-radius: 10px;
-  padding: 10px 14px;
+  padding: 10px 16px;
   cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
 }
 
 button.primary {
-  background: linear-gradient(120deg, #ef6935, var(--accent));
+  background: var(--accent);
   color: #fff;
-  font-weight: 700;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 180, 163, 0.25);
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 180, 163, 0.35);
 }
 
 button.ghost {
-  background: rgba(255, 255, 255, 0.08);
+  background: #f0f2f5;
   color: var(--text);
+  font-weight: 500;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: #e4e7ed;
 }
 
 button:disabled {
@@ -132,14 +153,14 @@ button:disabled {
   width: 100%;
   height: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--line);
   overflow: hidden;
 }
 
 .scan-bar > div {
   height: 100%;
   width: 0;
-  background: linear-gradient(120deg, #4bd4a1, #63b6ff);
+  background: var(--accent);
   transition: width 360ms ease;
 }
 
@@ -147,21 +168,22 @@ button:disabled {
   margin-top: 12px;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
   max-height: 220px;
   overflow: auto;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--bg);
 }
 
 .scan-live-list h4 {
   margin: 0 0 8px;
+  color: var(--text);
 }
 
 .scan-live-item {
   font-size: 13px;
-  color: #d7e4eb;
+  color: var(--muted);
   padding: 4px 0;
-  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  border-bottom: 1px dashed var(--line);
 }
 
 .scan-live-item:last-child {
@@ -198,8 +220,14 @@ button:disabled {
   align-items: center;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
   margin-bottom: 10px;
+  background: #ffffff;
+  transition: background-color 0.2s ease;
+}
+
+.item:hover {
+  background: #f8f9fc;
 }
 
 .item small {
@@ -227,7 +255,8 @@ button:disabled {
 }
 
 .result-footer {
-  color: #cfe8d8;
+  color: var(--safe);
+  font-weight: 500;
 }
 
 input,
@@ -235,9 +264,16 @@ select {
   width: 100%;
   border-radius: 8px;
   border: 1px solid var(--line);
-  padding: 8px;
+  padding: 8px 12px;
   color: var(--text);
-  background: rgba(0, 0, 0, 0.24);
+  background: #ffffff;
+  transition: border-color 0.2s ease;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 label small {
