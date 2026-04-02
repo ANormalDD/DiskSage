@@ -1,0 +1,31 @@
+# Go
+/build/
+*.exe
+*.exe~
+*.out
+*.test
+*.log
+*.tmp
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+.DS_Store
+
+# System
+Thumbs.db
+Desktop.ini
+
+# Others
+*.md5

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "DiskSage",
+  "outputfilename": "DiskSage",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dir": "frontend",
+  "author": {
+    "name": "DiskSage Team"
+  }
+}
