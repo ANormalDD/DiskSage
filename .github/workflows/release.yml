@@ -31,6 +31,10 @@ jobs:
         working-directory: frontend
         run: npm install
 
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 

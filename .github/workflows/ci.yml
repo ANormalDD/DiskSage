@@ -17,12 +17,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run Go tests
-        run: go test ./...
-
-      - name: Run Go vet
-        run: go vet ./...
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -35,3 +29,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run Go vet
+        run: go vet ./...
