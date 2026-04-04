@@ -143,6 +143,27 @@ wails dev
 wails build
 ```
 
+### 3. GitHub Actions 自动构建与发布
+
+仓库已提供两条工作流：
+
+- CI：`.github/workflows/ci.yml`
+	- 触发：push、pull request
+	- 内容：`go test ./...`、`go vet ./...`、前端 `npm run build`
+
+- Release：`.github/workflows/release.yml`
+	- 触发：推送 tag（例如 `v1.0.0`）或手动触发
+	- 内容：在 Windows Runner 执行 Wails 构建，产出 `DiskSage-windows-amd64.exe`，并自动创建 GitHub Release 上传附件
+
+发布示例：
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+推送后可在 GitHub 的 Actions 查看构建进度，在 Releases 页面获取安装包。
+
 ## 常见命令速查
 
 ```powershell
