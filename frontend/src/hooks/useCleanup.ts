@@ -1,8 +1,14 @@
 import { useMemo, useState } from "react";
 import type { AnalyzeProgressEvent, CleanSummary, Recommendation, ScanProgressEvent } from "../lib/types";
-import { analyzeLastScan, canContinueAnalyze, cleanSelected, continueAnalyzeLastScan, scanDrive, subscribeAnalyzeProgress, subscribeScanProgress } from "../lib/wailsbridge";
+import { analyzeLastScan, canContinueAnalyze, cleanSelected, continueAnalyzeLastScan, requestElevation, scanDrive, subscribeAnalyzeProgress, subscribeScanProgress } from "../lib/wailsbridge";
 
 export type Stage = "select" | "scanning" | "analyzing" | "results";
+
+const ELEVATION_REQUIRED_TOKEN = "ELEVATION_REQUIRED";
+
+function isElevationRequiredError(message: string): boolean {
+  return message.toUpperCase().includes(ELEVATION_REQUIRED_TOKEN);
+}
 
 export function useCleanup() {
   const [stage, setStage] = useState<Stage>("select");
@@ -14,6 +20,7 @@ export function useCleanup() {
   const [scanLivePaths, setScanLivePaths] = useState<string[]>([]);
   const [analyzeLiveOps, setAnalyzeLiveOps] = useState<AnalyzeProgressEvent[]>([]);
   const [canContinue, setCanContinue] = useState(false);
+  const [elevationRequired, setElevationRequired] = useState(false);
   const [scanTelemetry, setScanTelemetry] = useState<ScanProgressEvent>({
     path: "",
     dirs_seen: 0,
@@ -32,6 +39,7 @@ export function useCleanup() {
     setScanLivePaths([]);
     setAnalyzeLiveOps([]);
     setCanContinue(false);
+    setElevationRequired(false);
 
     const unsubscribe = subscribeScanProgress((event) => {
       setScanTelemetry(event);
@@ -82,6 +90,13 @@ export function useCleanup() {
       setStage("results");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (isElevationRequiredError(message)) {
+        setElevationRequired(true);
+        setError("扫描系统盘需要管理员权限。请点击“以管理员重启”后重试。");
+        setStage("select");
+        setProgress(0);
+        return;
+      }
       const resumable = await canContinueAnalyze();
       if (resumable) {
         setCanContinue(true);
@@ -104,6 +119,7 @@ export function useCleanup() {
     setError("");
     setBusy(true);
     setCanContinue(false);
+    setElevationRequired(false);
     setStage("analyzing");
 
     const unsubscribeAnalyze = subscribeAnalyzeProgress((event) => {
@@ -133,6 +149,13 @@ export function useCleanup() {
       setStage("results");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (isElevationRequiredError(message)) {
+        setElevationRequired(true);
+        setError("分析过程中触发管理员权限要求。请点击“以管理员重启”后重试。");
+        setStage("select");
+        setProgress(0);
+        return;
+      }
       const resumable = await canContinueAnalyze();
       if (resumable) {
         setCanContinue(true);
@@ -174,8 +197,24 @@ export function useCleanup() {
     }
   }
 
+  async function requestElevationRestart() {
+    setBusy(true);
+    try {
+      const started = await requestElevation();
+      if (!started) {
+        setError("当前环境不支持自动提权，请手动以管理员身份重新启动应用。");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || "提权请求失败，请手动以管理员身份重新启动应用。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function clearError() {
     setError("");
+    setElevationRequired(false);
   }
 
   return {
@@ -189,11 +228,13 @@ export function useCleanup() {
     scanLivePaths,
     analyzeLiveOps,
     canContinue,
+    elevationRequired,
     scanTelemetry,
     busy,
     error,
     runScan,
     continueAnalyze,
+    requestElevationRestart,
     toggleItem,
     cleanupNow,
     clearError,

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -78,6 +79,7 @@ func sanitizeRecommendations(in []models.Recommendation) []models.Recommendation
 	seen := make(map[string]struct{}, len(in))
 	out := make([]models.Recommendation, 0, len(in))
 	for _, item := range in {
+		item.Path = strings.TrimSpace(item.Path)
 		if item.Path == "" {
 			continue
 		}
@@ -93,8 +95,88 @@ func sanitizeRecommendations(in []models.Recommendation) []models.Recommendation
 		if item.Category == "" {
 			item.Category = models.CategoryReview
 		}
+		item = enforcePartialCleanupGuard(item)
 		seen[item.Path] = struct{}{}
 		out = append(out, item)
 	}
 	return out
+}
+
+func enforcePartialCleanupGuard(item models.Recommendation) models.Recommendation {
+	if !shouldForceSpecificSubpath(item.Path, item.Reason) {
+		return item
+	}
+
+	item.Category = models.CategoryReview
+	item.CleanMethod = models.MethodRedirect
+	item.Command = ""
+
+	if strings.TrimSpace(item.Reason) == "" {
+		item.Reason = "目录可能仅部分可清理，建议继续下探到具体缓存/日志子目录"
+	} else if !strings.Contains(item.Reason, "仅部分可清理") {
+		item.Reason = item.Reason + "；仅部分可清理，需继续下探"
+	}
+
+	if strings.TrimSpace(item.Risk) == "" {
+		item.Risk = "整目录清理风险高，建议仅清理明确的缓存/日志子目录"
+	} else if !strings.Contains(item.Risk, "整目录") {
+		item.Risk = item.Risk + "；整目录清理风险高"
+	}
+
+	return item
+}
+
+func shouldForceSpecificSubpath(path string, reason string) bool {
+	norm := strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	if norm == "" || norm == "." {
+		return false
+	}
+	if hasDisposableToken(norm) {
+		return false
+	}
+
+	if strings.HasSuffix(norm, "/appdata") || strings.HasSuffix(norm, "/appdata/roaming") || strings.HasSuffix(norm, "/appdata/local") || strings.HasSuffix(norm, "/onedrive") {
+		return true
+	}
+
+	segments := strings.Split(strings.Trim(norm, "/"), "/")
+	for i := 0; i < len(segments)-1; i++ {
+		if segments[i] == "appdata" && (segments[i+1] == "roaming" || segments[i+1] == "local") {
+			trailing := len(segments) - (i + 2)
+			if trailing <= 1 {
+				return true
+			}
+		}
+	}
+
+	reasonLower := strings.ToLower(strings.TrimSpace(reason))
+	if strings.Contains(reasonLower, "部分") || strings.Contains(reasonLower, "partial") {
+		if filepath.Ext(norm) == "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasDisposableToken(normPath string) bool {
+	tokens := []string{
+		"/cache",
+		"/caches",
+		"/tmp",
+		"/temp",
+		"/logs",
+		"/log",
+		"/dump",
+		"/dumps",
+		".dmp",
+		"/crash",
+		"crashpad",
+	}
+	for _, token := range tokens {
+		if strings.Contains(normPath, token) {
+			return true
+		}
+	}
+	return false
 }

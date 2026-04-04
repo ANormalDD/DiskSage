@@ -4,17 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"disksage/internal/analyzer"
 	"disksage/internal/cleaner"
 	"disksage/internal/config"
 	"disksage/internal/models"
+	"disksage/internal/privilege"
 	"disksage/internal/scanner"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+const elevationRequiredPrefix = "ELEVATION_REQUIRED"
 
 // App is the thin Wails binding layer.
 type App struct {
@@ -88,6 +94,9 @@ func (a *App) activeContext() context.Context {
 func (a *App) ScanDrive(drive string) (models.ScanResult, error) {
 	if drive == "" {
 		return models.ScanResult{}, errors.New("drive cannot be empty")
+	}
+	if requiresElevationForScan(drive) && !privilege.IsElevated() {
+		return models.ScanResult{}, fmt.Errorf("%s: 扫描 %s 需要管理员权限。请点击“以管理员重启”后重试", elevationRequiredPrefix, drive)
 	}
 
 	a.mu.RLock()
@@ -169,10 +178,54 @@ func (a *App) GetLLMDebugInfo() models.LLMDebugInfo {
 	return a.analyzer.GetDebugInfo()
 }
 
+func (a *App) IsElevated() bool {
+	return privilege.IsElevated()
+}
+
+func (a *App) RequestElevation() error {
+	if privilege.IsElevated() {
+		return nil
+	}
+	if err := privilege.RequestElevation(); err != nil {
+		return err
+	}
+
+	a.mu.RLock()
+	runtimeCtx := a.ctx
+	a.mu.RUnlock()
+
+	if runtimeCtx != nil {
+		go func(ctx context.Context) {
+			time.Sleep(300 * time.Millisecond)
+			runtime.Quit(ctx)
+		}(runtimeCtx)
+	}
+
+	return nil
+}
+
 func makeLLMClient(cfg models.LLMConfig) analyzer.LLMClient {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if strings.TrimSpace(cfg.APIKey) != "" && (provider == "openai" || provider == "custom" || provider == "openai-compatible") {
 		return analyzer.NewOpenAICompatibleClient()
 	}
 	return analyzer.NewHeuristicClient()
+}
+
+func requiresElevationForScan(path string) bool {
+	if goruntime.GOOS != "windows" {
+		return false
+	}
+	if path == "" {
+		return false
+	}
+	normalized := strings.TrimSpace(path)
+	if strings.EqualFold(normalized, "C:") || strings.EqualFold(normalized, `C:\`) || strings.EqualFold(normalized, `C:/`) {
+		return true
+	}
+	clean := strings.TrimRight(filepath.Clean(normalized), `\\/`)
+	if strings.EqualFold(clean, "C:") {
+		return true
+	}
+	return privilege.NeedsElevation(clean)
 }

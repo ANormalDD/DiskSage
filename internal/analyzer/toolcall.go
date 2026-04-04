@@ -5,6 +5,7 @@ import "encoding/json"
 const (
 	ToolScanDeeper            = "scan_deeper"
 	ToolCheckDirContent       = "check_dir_content"
+	ToolTavilySearch          = "tavily_search"
 	ToolSubmitRecommendations = "submit_recommendations"
 )
 
@@ -35,13 +36,26 @@ func DefaultToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        ToolCheckDirContent,
-			Description: "Get file type distribution under a directory",
+			Description: "Get directory evidence including file type distribution and folder timestamps (CreatedAt, ModifiedAt)",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path": map[string]any{"type": "string"},
 				},
 				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        ToolTavilySearch,
+			Description: "Search web knowledge via Tavily for unknown folders/apps to determine whether they are safe to clean",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query":        map[string]any{"type": "string"},
+					"search_depth": map[string]any{"type": "string", "enum": []string{"basic", "advanced"}},
+					"max_results":  map[string]any{"type": "integer"},
+				},
+				"required": []string{"query"},
 			},
 		},
 		{

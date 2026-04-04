@@ -16,13 +16,13 @@ export default function ResultCard({ item, checked, onToggle }: Props) {
         onChange={() => onToggle(item.path)}
         disabled={item.category === "review"}
       />
-      <div>
-        <div>{item.path}</div>
-        <small>
+      <div className="item-body">
+        <div className="item-path" title={item.path}>{item.path}</div>
+        <small className="item-desc">
           {item.reason} | 风险: {item.risk}
         </small>
       </div>
-      <strong>{formatBytes(item.size)}</strong>
+      <strong className="item-size">{formatBytes(item.size)}</strong>
     </article>
   );
 }

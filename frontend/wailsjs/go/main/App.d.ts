@@ -16,6 +16,10 @@ export function GetLLMDebugInfo():Promise<models.LLMDebugInfo>;
 
 export function GetTokenStats():Promise<models.TokenStats>;
 
+export function IsElevated():Promise<boolean>;
+
+export function RequestElevation():Promise<void>;
+
 export function SaveConfig(arg1:models.AppConfig):Promise<void>;
 
 export function ScanDrive(arg1:string):Promise<models.ScanResult>;

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"disksage/internal/analyzer"
@@ -14,6 +15,25 @@ func TestAppCleanValidation(t *testing.T) {
 	_, err := app.Clean(models.CleanRequest{})
 	if err == nil {
 		t.Fatalf("expected validation error")
+	}
+}
+
+func TestRequiresElevationForScan(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		if requiresElevationForScan("C:") {
+			t.Fatalf("expected non-windows to skip elevation check")
+		}
+		return
+	}
+
+	if !requiresElevationForScan("C:") {
+		t.Fatalf("expected C: scan to require elevation")
+	}
+	if !requiresElevationForScan(`C:\Windows`) {
+		t.Fatalf("expected protected path scan to require elevation")
+	}
+	if requiresElevationForScan(`D:\Projects`) {
+		t.Fatalf("did not expect D: scan to require elevation")
 	}
 }
 

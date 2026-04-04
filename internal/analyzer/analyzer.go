@@ -334,7 +334,7 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			for _, tc := range resp.ToolCalls {
 				a.emitProgress(AnalysisProgressEvent{Type: "tool_call", Turn: turn, Tool: tc.Name, Path: extractToolPath(tc), Input: formatJSONForProgress(tc.Arguments)})
 			}
-			toolResults, submitRecs, toolErr := executeToolCalls(resp.ToolCalls, scanDeeper, checkDirContent, func(name, path, input, output string) {
+			toolResults, submitRecs, toolErr := executeToolCalls(ctx, resp.ToolCalls, scanDeeper, checkDirContent, cfg, func(name, path, input, output string) {
 				a.emitProgress(AnalysisProgressEvent{Type: "tool_result", Turn: turn, Tool: name, Path: path, Input: truncateProgressText(input, 12000), Output: truncateProgressText(output, 12000)})
 			})
 			if toolErr != nil {
@@ -356,9 +356,9 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 					session.NextTurn++
 					continue
 				}
-				a.recordUsage(analysisUsage)
-				a.recordDebug(strings.Join(session.RawOutputs, "\n\n"), toolErr.Error(), "llm")
-				return nil, toolErr
+				session.CtxNotes = append(session.CtxNotes, "工具调用异常（请修正参数后继续）：\n"+toolErr.Error())
+				session.NextTurn++
+				continue
 			}
 			if len(submitRecs) > 0 {
 				submitRecs = resolveRecommendationSizes(submitRecs, scanDeeper)
@@ -522,23 +522,44 @@ func autoProbeLargeDirs(root models.DirNode, scanDeeper func(path string, depth 
 	return results
 }
 
-func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth int) (models.DirNode, error), checkDirContent func(path string) (models.FileTypeDistribution, error), onExecuted func(name, path, input, output string)) ([]string, []models.Recommendation, error) {
+type TavilyConfig struct {
+	APIKey      string
+	BaseURL     string
+	Query       string
+	SearchDepth string
+	MaxResults  int
+}
+
+func executeToolCalls(ctx context.Context, toolCalls []ToolCall, scanDeeper func(path string, depth int) (models.DirNode, error), checkDirContent func(path string) (models.FileTypeDistribution, error), cfg models.LLMConfig, onExecuted func(name, path, input, output string)) ([]string, []models.Recommendation, error) {
 	results := make([]string, 0, len(toolCalls))
 	for _, tc := range toolCalls {
 		switch tc.Name {
 		case ToolSubmitRecommendations:
 			recs, err := parseSubmitRecommendations(tc.Arguments)
 			if err != nil {
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), "submit_recommendations error: "+err.Error())
+				}
 				return nil, nil, fmt.Errorf("submit_recommendations arguments invalid: %w", err)
 			}
 			if len(recs) > 0 {
 				if onExecuted != nil {
 					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), fmt.Sprintf("submit_recommendations accepted %d item(s)", len(recs)))
 				}
-				return nil, recs, nil
+				return results, recs, nil
 			}
+			emptyMsg := "submit_recommendations returned empty recommendations"
+			if onExecuted != nil {
+				onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), emptyMsg)
+			}
+			results = append(results, emptyMsg)
 		case ToolScanDeeper:
 			if scanDeeper == nil {
+				unavailable := "scan_deeper unavailable on current runtime"
+				if onExecuted != nil {
+					onExecuted(tc.Name, extractToolPath(tc), formatJSONForProgress(tc.Arguments), unavailable)
+				}
+				results = append(results, "scan_deeper error:\n"+unavailable)
 				continue
 			}
 			var args struct {
@@ -546,14 +567,33 @@ func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth i
 				Depth int    `json:"depth"`
 			}
 			if err := json.Unmarshal(tc.Arguments, &args); err != nil {
-				return nil, nil, fmt.Errorf("scan_deeper arguments invalid: %w", err)
+				msg := fmt.Sprintf("scan_deeper arguments invalid: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "scan_deeper error:\n"+msg)
+				continue
+			}
+			args.Path = strings.TrimSpace(args.Path)
+			if args.Path == "" {
+				msg := "scan_deeper arguments invalid: path is empty"
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "scan_deeper error:\n"+msg)
+				continue
 			}
 			if args.Depth <= 0 {
 				args.Depth = 3
 			}
 			child, err := scanDeeper(args.Path, args.Depth)
 			if err != nil {
-				return nil, nil, fmt.Errorf("scan_deeper failed: %w", err)
+				msg := fmt.Sprintf("scan_deeper failed: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, args.Path, formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "scan_deeper error:\n"+msg)
+				continue
 			}
 			rendered := scanner.RenderCompressedTree(child, scanner.RenderConfig{TopNPerLevel: 20, MinChildSize: 10 * 1024 * 1024})
 			if onExecuted != nil {
@@ -562,23 +602,87 @@ func executeToolCalls(toolCalls []ToolCall, scanDeeper func(path string, depth i
 			results = append(results, "scan_deeper result:\n"+rendered)
 		case ToolCheckDirContent:
 			if checkDirContent == nil {
+				unavailable := "check_dir_content unavailable on current runtime"
+				if onExecuted != nil {
+					onExecuted(tc.Name, extractToolPath(tc), formatJSONForProgress(tc.Arguments), unavailable)
+				}
+				results = append(results, "check_dir_content error:\n"+unavailable)
 				continue
 			}
 			var args struct {
 				Path string `json:"path"`
 			}
 			if err := json.Unmarshal(tc.Arguments, &args); err != nil {
-				return nil, nil, fmt.Errorf("check_dir_content arguments invalid: %w", err)
+				msg := fmt.Sprintf("check_dir_content arguments invalid: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "check_dir_content error:\n"+msg)
+				continue
+			}
+			args.Path = strings.TrimSpace(args.Path)
+			if args.Path == "" {
+				msg := "check_dir_content arguments invalid: path is empty"
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "check_dir_content error:\n"+msg)
+				continue
 			}
 			dist, err := checkDirContent(args.Path)
 			if err != nil {
-				return nil, nil, fmt.Errorf("check_dir_content failed: %w", err)
+				msg := fmt.Sprintf("check_dir_content failed: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, args.Path, formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "check_dir_content error:\n"+msg)
+				continue
 			}
 			blob, _ := json.MarshalIndent(dist, "", "  ")
 			if onExecuted != nil {
 				onExecuted(tc.Name, args.Path, formatJSONForProgress(tc.Arguments), string(blob))
 			}
 			results = append(results, "check_dir_content result:\n"+string(blob))
+		case ToolTavilySearch:
+			var args struct {
+				Query       string `json:"query"`
+				SearchDepth string `json:"search_depth"`
+				MaxResults  int    `json:"max_results"`
+			}
+			if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+				msg := fmt.Sprintf("tavily_search arguments invalid: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "tavily_search error:\n"+msg)
+				continue
+			}
+
+			output, err := runTavilySearch(ctx, TavilyConfig{
+				APIKey:      strings.TrimSpace(cfg.TavilyAPIKey),
+				BaseURL:     strings.TrimSpace(cfg.TavilyBaseURL),
+				Query:       strings.TrimSpace(args.Query),
+				SearchDepth: strings.TrimSpace(args.SearchDepth),
+				MaxResults:  args.MaxResults,
+			})
+			if err != nil {
+				msg := fmt.Sprintf("tavily_search failed: %v", err)
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "tavily_search error:\n"+msg)
+				continue
+			}
+			if onExecuted != nil {
+				onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), output)
+			}
+			results = append(results, "tavily_search result:\n"+output)
+		default:
+			msg := fmt.Sprintf("unsupported tool call: %s", tc.Name)
+			if onExecuted != nil {
+				onExecuted(tc.Name, extractToolPath(tc), formatJSONForProgress(tc.Arguments), msg)
+			}
+			results = append(results, "tool error:\n"+msg)
 		}
 	}
 

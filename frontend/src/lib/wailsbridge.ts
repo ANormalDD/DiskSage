@@ -2,6 +2,8 @@ import type { AnalyzeProgressEvent, AppConfig, CleanSummary, LLMDebugInfo, Recom
 
 type AppBinding = {
   ScanDrive: (drive: string) => Promise<any>;
+  IsElevated?: () => Promise<boolean>;
+  RequestElevation?: () => Promise<void>;
   AnalyzeLastScan: () => Promise<any>;
   ContinueAnalyzeLastScan: () => Promise<any>;
   CanContinueAnalyze: () => Promise<boolean>;
@@ -125,6 +127,23 @@ export async function canContinueAnalyze(): Promise<boolean> {
   return !!(await app.CanContinueAnalyze());
 }
 
+export async function isElevated(): Promise<boolean> {
+  const app = binding();
+  if (!app?.IsElevated) {
+    return false;
+  }
+  return !!(await app.IsElevated());
+}
+
+export async function requestElevation(): Promise<boolean> {
+  const app = binding();
+  if (!app?.RequestElevation) {
+    return false;
+  }
+  await app.RequestElevation();
+  return true;
+}
+
 export async function cleanSelected(items: Recommendation[]): Promise<CleanSummary> {
   const app = binding();
   if (!app) {
@@ -174,6 +193,8 @@ export async function getConfig(): Promise<AppConfig> {
         base_url: "https://api.openai.com/v1",
         max_tokens: 1200,
         max_turns: 6,
+        tavily_api_key: "",
+        tavily_base_url: "https://api.tavily.com",
       },
     };
   }
@@ -187,6 +208,8 @@ export async function getConfig(): Promise<AppConfig> {
       base_url: llm.base_url ?? "https://api.openai.com/v1",
       max_tokens: llm.max_tokens ?? 1200,
       max_turns: llm.max_turns ?? 6,
+      tavily_api_key: llm.tavily_api_key ?? "",
+      tavily_base_url: llm.tavily_base_url ?? "https://api.tavily.com",
     },
   };
 }
@@ -202,6 +225,8 @@ export async function saveConfig(cfg: AppConfig): Promise<void> {
       base_url: cfg.llm.base_url,
       max_tokens: cfg.llm.max_tokens,
       max_turns: cfg.llm.max_turns,
+      tavily_api_key: cfg.llm.tavily_api_key,
+      tavily_base_url: cfg.llm.tavily_base_url,
     },
   });
 }

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -363,5 +364,59 @@ func TestAnalyzerResolvesSizeFromClientScan(t *testing.T) {
 	}
 	if recs[0].Size != 123456789 {
 		t.Fatalf("expected size from client scan, got %d", recs[0].Size)
+	}
+}
+
+func TestAnalyzerContinuesWhenToolExecutionFails(t *testing.T) {
+	client := &sequenceClient{
+		responses: []LLMResponse{
+			{
+				ToolCalls: []ToolCall{{
+					Name:      ToolScanDeeper,
+					Arguments: []byte(`{"path":"D:/missing","depth":2}`),
+				}},
+			},
+			{
+				Recommendations: []models.Recommendation{{
+					Path:        "D:/temp/cache",
+					Size:        100,
+					Category:    models.CategorySafe,
+					Reason:      "cache",
+					CleanMethod: models.MethodRecycle,
+					Risk:        "low",
+				}},
+			},
+		},
+		errs: []error{nil, nil},
+	}
+
+	events := make([]AnalysisProgressEvent, 0, 8)
+	a := NewAnalyzer(Options{
+		Client: client,
+		ScanDeeper: func(path string, depth int) (models.DirNode, error) {
+			return models.DirNode{}, fmt.Errorf("path not found: %s", path)
+		},
+		OnProgress: func(event AnalysisProgressEvent) {
+			events = append(events, event)
+		},
+	})
+
+	recs, err := a.Analyze(context.Background(), models.DirNode{Path: "D:/", Size: 1})
+	if err != nil {
+		t.Fatalf("analyze should continue after tool error, got: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 recommendation, got %d", len(recs))
+	}
+
+	foundToolErr := false
+	for _, event := range events {
+		if event.Type == "tool_result" && event.Tool == ToolScanDeeper && strings.Contains(strings.ToLower(event.Output), "path not found") {
+			foundToolErr = true
+			break
+		}
+	}
+	if !foundToolErr {
+		t.Fatalf("expected tool_result error event, got %+v", events)
 	}
 }

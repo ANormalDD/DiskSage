@@ -47,6 +47,22 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
           />
         </label>
         <label>
+          Tavily API Key
+          <input
+            type="password"
+            value={draft.llm.tavily_api_key}
+            onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, tavily_api_key: e.target.value } })}
+          />
+        </label>
+        <label>
+          Tavily Base URL
+          <input
+            value={draft.llm.tavily_base_url}
+            onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, tavily_base_url: e.target.value } })}
+          />
+          <small>默认 https://api.tavily.com</small>
+        </label>
+        <label>
           Max Tokens
           <input
             type="number"

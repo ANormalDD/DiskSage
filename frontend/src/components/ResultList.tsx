@@ -21,15 +21,17 @@ export default function ResultList({ recommendations, selected, onToggle }: Prop
             <h3>
               {titleCaseCategory(category)} ({rows.length}) - {formatBytes(total)}
             </h3>
-            {rows.length === 0 && <p>暂无项目</p>}
-            {rows.map((item) => (
-              <ResultCard
-                key={item.path}
-                item={item}
-                checked={!!selected[item.path]}
-                onToggle={onToggle}
-              />
-            ))}
+            <div className="category-list">
+              {rows.length === 0 && <p>暂无项目</p>}
+              {rows.map((item) => (
+                <ResultCard
+                  key={item.path}
+                  item={item}
+                  checked={!!selected[item.path]}
+                  onToggle={onToggle}
+                />
+              ))}
+            </div>
           </section>
         );
       })}

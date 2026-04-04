@@ -30,6 +30,14 @@ export function GetTokenStats() {
   return window['go']['main']['App']['GetTokenStats']();
 }
 
+export function IsElevated() {
+  return window['go']['main']['App']['IsElevated']();
+}
+
+export function RequestElevation() {
+  return window['go']['main']['App']['RequestElevation']();
+}
+
 export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }

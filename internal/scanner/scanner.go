@@ -82,8 +82,9 @@ func (s *Scanner) scanPath(path string, depth int) (models.DirNode, error) {
 	}
 
 	if !info.IsDir() {
-		node.Size = info.Size()
-		s.recordFile(path, info.Size())
+		localSize := localFileSize(path, info)
+		node.Size = localSize
+		s.recordFile(path, localSize)
 		return node, nil
 	}
 
@@ -191,6 +192,12 @@ func (s *Scanner) emitProgress(path string, force bool, done bool) {
 }
 
 func (s *Scanner) CheckDirContent(path string) (models.FileTypeDistribution, error) {
+	rootInfo, statErr := os.Stat(path)
+	if statErr != nil {
+		return models.FileTypeDistribution{}, statErr
+	}
+	createdAt, modifiedAt := fileTimes(rootInfo)
+
 	stats := map[string]*models.FileTypeStat{}
 	maxFiles := 3000
 	seen := 0
@@ -215,13 +222,14 @@ func (s *Scanner) CheckDirContent(path string) (models.FileTypeDistribution, err
 			return nil
 		}
 		pattern := classifyPattern(d.Name())
+		localSize := localFileSize(p, info)
 		st, ok := stats[pattern]
 		if !ok {
 			st = &models.FileTypeStat{Pattern: pattern}
 			stats[pattern] = st
 		}
 		st.Count++
-		st.Size += info.Size()
+		st.Size += localSize
 		return nil
 	})
 	if err != nil && err != fs.SkipAll {
@@ -238,7 +246,12 @@ func (s *Scanner) CheckDirContent(path string) (models.FileTypeDistribution, err
 	if len(out) > 10 {
 		out = out[:10]
 	}
-	return models.FileTypeDistribution{Path: path, Stats: out}, nil
+	return models.FileTypeDistribution{
+		Path:       path,
+		CreatedAt:  createdAt,
+		ModifiedAt: modifiedAt,
+		Stats:      out,
+	}, nil
 }
 
 func detectMarkers(entries []os.DirEntry) []string {
@@ -274,7 +287,7 @@ func estimateDirSize(path string) (int64, time.Time) {
 		if statErr != nil {
 			return nil
 		}
-		total += info.Size()
+		total += localFileSize(p, info)
 		if info.ModTime().After(latest) {
 			latest = info.ModTime()
 		}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { AnalyzeProgressEvent } from "../lib/types";
 
 type Props = {
@@ -11,26 +11,32 @@ type Props = {
   canContinue: boolean;
   busy: boolean;
   onContinue: () => Promise<void>;
+  showScanMeta?: boolean;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
 };
 
-function eventLabel(type: string): string {
-  switch (type) {
-    case "reasoning":
-      return "Reasoning";
-    case "tool_call":
-      return "工具调用";
-    case "tool_result":
-      return "工具结果";
-    case "assistant_text":
-      return "模型文本";
+type TimelineItem = AnalyzeProgressEvent & {
+  order: number;
+};
+
+type TurnBucket = {
+  reasonings: TimelineItem[];
+  texts: TimelineItem[];
+  tools: TimelineItem[];
+  statuses: TimelineItem[];
+};
+
+function statusText(op: TimelineItem): string {
+  switch (op.type) {
     case "paused_rate_limit":
-      return "限流暂停";
+      return op.content ? `触发限流：${op.content}` : "触发限流，等待继续";
     case "resume":
-      return "继续分析";
+      return "继续迭代 LLM 分析";
     case "completed":
-      return "已完成";
+      return "分析完成，已生成建议";
     default:
-      return "事件";
+      return op.content || op.type || "收到事件";
   }
 }
 
@@ -40,8 +46,6 @@ function eventTone(type: string): string {
       return "reasoning";
     case "tool_call":
       return "call";
-    case "tool_result":
-      return "result";
     case "paused_rate_limit":
       return "warn";
     case "completed":
@@ -51,29 +55,159 @@ function eventTone(type: string): string {
   }
 }
 
-function renderMain(op: AnalyzeProgressEvent): string {
-  if (op.type === "tool_call") {
-    return `调用工具 ${op.tool}${op.path ? ` (${op.path})` : ""}`;
+function normalizeToolKey(value: string): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizePathKey(value: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  const slash = trimmed.replace(/\\/g, "/").replace(/\/+/g, "/");
+  return slash.replace(/\/$/, "").toLowerCase();
+}
+
+function normalizeEvent(op: AnalyzeProgressEvent, order: number): TimelineItem {
+  return {
+    ...op,
+    type: op.type || "",
+    tool: op.tool || "",
+    path: op.path || "",
+    content: op.content || "",
+    reason: op.reason || "",
+    input: op.input || "",
+    output: op.output || "",
+    at: op.at || "",
+    turn: typeof op.turn === "number" ? op.turn : Number(op.turn) || 0,
+    order,
+  };
+}
+
+function isSameToolCall(call: TimelineItem, result: TimelineItem): boolean {
+  if (normalizeToolKey(call.tool) !== normalizeToolKey(result.tool)) {
+    return false;
   }
-  if (op.type === "tool_result") {
-    return `工具 ${op.tool} 执行完成${op.path ? ` (${op.path})` : ""}`;
+
+  const callPath = normalizePathKey(call.path);
+  const resultPath = normalizePathKey(result.path);
+  if (callPath && resultPath) {
+    return callPath === resultPath;
   }
-  if (op.type === "paused_rate_limit") {
-    return op.content ? `触发限流：${op.content}` : "触发限流，等待继续";
+
+  const callInput = (call.input || "").trim();
+  const resultInput = (result.input || "").trim();
+  if (callInput && resultInput) {
+    return callInput === resultInput;
   }
-  if (op.type === "resume") {
-    return "继续迭代 LLM 分析";
+
+  return true;
+}
+
+function findMatchingToolCall(
+  turnBuckets: Map<number, TurnBucket>,
+  turnOrder: number[],
+  result: TimelineItem
+): TimelineItem | null {
+  let fallback: TimelineItem | null = null;
+
+  for (let i = turnOrder.length - 1; i >= 0; i--) {
+    const turn = turnOrder[i];
+    const bucket = turnBuckets.get(turn);
+    if (!bucket) continue;
+
+    for (let j = bucket.tools.length - 1; j >= 0; j--) {
+      const call = bucket.tools[j];
+      if (!isSameToolCall(call, result)) {
+        continue;
+      }
+      if (!call.output) {
+        return call;
+      }
+      if (!fallback) {
+        fallback = call;
+      }
+    }
   }
-  if (op.type === "completed") {
-    return "分析完成，已生成建议";
+
+  return fallback;
+}
+
+function buildTurns(llmOps: AnalyzeProgressEvent[]): Array<{ turn: number; bucket: TurnBucket }> {
+  const turnBuckets = new Map<number, TurnBucket>();
+  const turnOrder: number[] = [];
+
+  const getBucket = (turn: number): TurnBucket => {
+    if (!turnBuckets.has(turn)) {
+      turnBuckets.set(turn, {
+        reasonings: [],
+        texts: [],
+        tools: [],
+        statuses: [],
+      });
+      turnOrder.push(turn);
+    }
+    return turnBuckets.get(turn)!;
+  };
+
+  llmOps.forEach((raw, index) => {
+    const op = normalizeEvent(raw, index);
+    const bucket = getBucket(op.turn);
+
+    if (op.type === "tool_result") {
+      const matched = findMatchingToolCall(turnBuckets, turnOrder, op);
+      if (matched) {
+        if (op.input && !matched.input) {
+          matched.input = op.input;
+        }
+        if (op.output) {
+          matched.output = op.output;
+        } else if (op.content && !matched.output) {
+          matched.output = op.content;
+        }
+        if (op.at) {
+          matched.at = op.at;
+        }
+        return;
+      }
+
+      bucket.tools.push({
+        ...op,
+        type: "tool_call",
+        content: op.content || `工具 ${op.tool} 执行完成`,
+        output: op.output || op.content,
+      });
+      return;
+    }
+
+    if (op.type === "reasoning") {
+      bucket.reasonings.push(op);
+      return;
+    }
+    if (op.type === "assistant_text") {
+      bucket.texts.push(op);
+      return;
+    }
+    if (op.type === "tool_call") {
+      bucket.tools.push(op);
+      return;
+    }
+
+    bucket.statuses.push(op);
+  });
+
+  const turns = Array.from(turnBuckets.keys()).sort((a, b) => a - b);
+  const sortByOrder = (a: TimelineItem, b: TimelineItem) => a.order - b.order;
+  const orderedTurns: Array<{ turn: number; bucket: TurnBucket }> = [];
+
+  for (const turn of turns) {
+    const bucket = turnBuckets.get(turn)!;
+    bucket.reasonings.sort(sortByOrder);
+    bucket.texts.sort(sortByOrder);
+    bucket.tools.sort(sortByOrder);
+    bucket.statuses.sort(sortByOrder);
+    orderedTurns.push({ turn, bucket });
   }
-  if (op.type === "reasoning") {
-    return "模型产生推理过程";
-  }
-  if (op.type === "assistant_text") {
-    return "模型返回文本消息";
-  }
-  return op.content || op.type || "收到事件";
+
+  return orderedTurns;
 }
 
 function formatEventTime(at: string): string {
@@ -83,79 +217,108 @@ function formatEventTime(at: string): string {
   return date.toLocaleTimeString();
 }
 
-export default function ScanProgress({ phase, progress, currentPath, dirsSeen, filesSeen, llmOps, canContinue, busy, onContinue }: Props) {
+export default function ScanProgress({
+  phase,
+  progress,
+  currentPath,
+  dirsSeen,
+  filesSeen,
+  llmOps,
+  canContinue,
+  busy,
+  onContinue,
+  showScanMeta = true,
+  collapsible = false,
+  defaultCollapsed = false,
+}: Props) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const turns = useMemo(() => buildTurns(llmOps), [llmOps]);
+  const totalEvents = useMemo(
+    () => turns.reduce((sum, turn) => sum + turn.bucket.reasonings.length + turn.bucket.texts.length + turn.bucket.tools.length + turn.bucket.statuses.length, 0),
+    [turns]
+  );
 
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [llmOps.length]);
+  }, [totalEvents]);
 
-  return (
-    <section className="scan-box">
-      <h2>{phase === "scanning" ? "扫描中" : "分析中"}</h2>
-      <div className="scan-bar">
-        <div style={{ width: `${progress}%` }} />
-      </div>
-      <p>{phase === "scanning" ? "正在构建压缩目录树..." : "正在迭代 LLM 清理分析..."} {progress}%</p>
-      <p>已扫描目录 {dirsSeen} 个，文件 {filesSeen} 个</p>
-      <p>当前：{phase === "scanning" ? (currentPath || "等待扫描事件...") : "等待模型/工具事件..."}</p>
+  const flowBody = (
+    <>
+      {showScanMeta && (
+        <>
+          <h2>{phase === "scanning" ? "扫描中" : "分析中"}</h2>
+          <div className="scan-bar">
+            <div style={{ width: `${progress}%` }} />
+          </div>
+          <p>{phase === "scanning" ? "正在构建压缩目录树..." : "正在迭代 LLM 清理分析..."} {progress}%</p>
+          <p>已扫描目录 {dirsSeen} 个，文件 {filesSeen} 个</p>
+          <p>当前：{phase === "scanning" ? (currentPath || "等待扫描事件...") : "等待模型/工具事件..."}</p>
+        </>
+      )}
 
       <div ref={listRef} className="scan-live-list agent-flow">
         <h4>实时 LLM 工作流</h4>
-        {llmOps.length === 0 && <p>暂无操作输出</p>}
-        {llmOps.map((op, idx) => {
-          const tone = eventTone(op.type);
-          const timeText = formatEventTime(op.at);
-          const reasonText = op.reason || (op.type === "reasoning" ? op.content : "");
-          const hasToolIO = (op.type === "tool_call" || op.type === "tool_result") && (!!op.input || !!op.output);
-          const extraText = op.type !== "reasoning" && op.type !== "assistant_text" ? op.content : "";
+        {turns.length === 0 && <p>暂无操作输出</p>}
+        {turns.map(({ turn, bucket }) => (
+          <section key={`turn-${turn}`} className="agent-turn">
+            <div className="agent-turn-title">Turn {turn}</div>
 
-          return (
-            <article key={`${op.at || "no-at"}-${op.type}-${idx}`} className={`scan-live-item timeline-item tone-${tone}`}>
-              <div className="timeline-head">
-                <span className={`timeline-badge tone-${tone}`}>{eventLabel(op.type)}</span>
-                <span className="timeline-meta">Turn {op.turn}{timeText ? ` · ${timeText}` : ""}</span>
-              </div>
+            {bucket.reasonings.length > 0 && (
+              <details className="agent-row">
+                <summary className="agent-toggle">思考内容</summary>
+                <div className="agent-content-stack">
+                  {bucket.reasonings.map((item, idx) => (
+                    <pre key={`r-${item.at || idx}`} className="agent-pre">{item.reason || item.content}</pre>
+                  ))}
+                </div>
+              </details>
+            )}
 
-              <p className="timeline-main">{renderMain(op)}</p>
-              {extraText && <p className="timeline-note">{extraText}</p>}
+            {bucket.texts.map((item, idx) => (
+              <pre key={`t-${item.at || idx}`} className="agent-pre agent-pre-plain">{item.content}</pre>
+            ))}
 
-              {reasonText && (
-                <details className="timeline-detail">
-                  <summary>查看 reasoning</summary>
-                  <pre className="timeline-pre">{reasonText}</pre>
-                </details>
-              )}
+            {bucket.tools.length > 0 && (
+              <details className="agent-row">
+                <summary className="agent-toggle">工具调用（{bucket.tools.length}）</summary>
+                <div className="agent-tool-list">
+                  {bucket.tools.map((item, idx) => (
+                    <details key={`tool-${item.at || idx}-${item.tool}`} className="agent-tool-card">
+                      <summary className="agent-tool-summary">
+                        <span>{item.tool || "未知工具"}{item.path ? ` · ${item.path}` : ""}</span>
+                        <span className="agent-tool-time">{formatEventTime(item.at)}</span>
+                      </summary>
+                      {(item.input || item.output) ? (
+                        <div className="agent-tool-io">
+                          {item.input && (
+                            <>
+                              <h5>输入</h5>
+                              <pre className="agent-pre">{item.input}</pre>
+                            </>
+                          )}
+                          {item.output && (
+                            <>
+                              <h5>输出</h5>
+                              <pre className="agent-pre">{item.output}</pre>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <pre className="agent-pre">{item.content || "无额外输出"}</pre>
+                      )}
+                    </details>
+                  ))}
+                </div>
+              </details>
+            )}
 
-              {hasToolIO && (
-                <details className="timeline-detail">
-                  <summary>查看工具输入/输出</summary>
-                  {op.input && (
-                    <>
-                      <h5>输入</h5>
-                      <pre className="timeline-pre">{op.input}</pre>
-                    </>
-                  )}
-                  {op.output && (
-                    <>
-                      <h5>输出</h5>
-                      <pre className="timeline-pre">{op.output}</pre>
-                    </>
-                  )}
-                </details>
-              )}
-
-              {op.type === "assistant_text" && op.content && (
-                <details className="timeline-detail">
-                  <summary>查看模型文本</summary>
-                  <pre className="timeline-pre">{op.content}</pre>
-                </details>
-              )}
-            </article>
-          );
-        })}
+            {bucket.statuses.map((item, idx) => (
+              <p key={`s-${item.at || idx}`} className={`agent-status tone-${eventTone(item.type)}`}>{statusText(item)}</p>
+            ))}
+          </section>
+        ))}
       </div>
 
       {canContinue && (
@@ -166,6 +329,19 @@ export default function ScanProgress({ phase, progress, currentPath, dirsSeen, f
           </button>
         </div>
       )}
-    </section>
+    </>
   );
+
+  if (collapsible) {
+    return (
+      <section className="scan-box workflow-box">
+        <details className="workflow-details" open={!defaultCollapsed}>
+          <summary>LLM 工作流（{totalEvents} 条）</summary>
+          {flowBody}
+        </details>
+      </section>
+    );
+  }
+
+  return <section className="scan-box">{flowBody}</section>;
 }

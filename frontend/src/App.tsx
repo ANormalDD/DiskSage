@@ -17,6 +17,8 @@ const defaultConfig: AppConfig = {
     base_url: "https://api.openai.com/v1",
     max_tokens: 1200,
     max_turns: 6,
+    tavily_api_key: "",
+    tavily_base_url: "https://api.tavily.com",
   },
 };
 
@@ -95,7 +97,14 @@ export default function App() {
       {cleanup.error && (
         <section className="error-banner">
           <p>{cleanup.error}</p>
-          <button className="ghost" onClick={cleanup.clearError}>关闭提示</button>
+          <div className="error-actions">
+            {cleanup.elevationRequired && (
+              <button className="primary" disabled={cleanup.busy} onClick={() => void cleanup.requestElevationRestart()}>
+                以管理员重启
+              </button>
+            )}
+            <button className="ghost" onClick={cleanup.clearError}>关闭提示</button>
+          </div>
         </section>
       )}
 
@@ -147,6 +156,21 @@ export default function App() {
               清理选中项
             </button>
           </section>
+
+          <ScanProgress
+            phase="analyzing"
+            progress={100}
+            currentPath={cleanup.scanTelemetry.path}
+            dirsSeen={cleanup.scanTelemetry.dirs_seen}
+            filesSeen={cleanup.scanTelemetry.files_seen}
+            llmOps={cleanup.analyzeLiveOps}
+            canContinue={cleanup.canContinue}
+            busy={cleanup.busy}
+            onContinue={cleanup.continueAnalyze}
+            showScanMeta={false}
+            collapsible
+            defaultCollapsed
+          />
 
           <section className="tree-card">
             <h3>压缩目录树</h3>

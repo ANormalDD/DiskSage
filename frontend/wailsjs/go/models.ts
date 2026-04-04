@@ -7,6 +7,8 @@ export namespace models {
 	    base_url: string;
 	    max_tokens: number;
 	    max_turns: number;
+	    tavily_api_key: string;
+	    tavily_base_url: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LLMConfig(source);
@@ -20,6 +22,8 @@ export namespace models {
 	        this.base_url = source["base_url"];
 	        this.max_tokens = source["max_tokens"];
 	        this.max_turns = source["max_turns"];
+	        this.tavily_api_key = source["tavily_api_key"];
+	        this.tavily_base_url = source["tavily_base_url"];
 	    }
 	}
 	export class AppConfig {

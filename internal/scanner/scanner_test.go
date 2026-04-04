@@ -67,4 +67,10 @@ func TestCheckDirContent(t *testing.T) {
 	if len(dist.Stats) == 0 {
 		t.Fatalf("expected stats")
 	}
+	if dist.CreatedAt.IsZero() {
+		t.Fatalf("expected created_at to be populated")
+	}
+	if dist.ModifiedAt.IsZero() {
+		t.Fatalf("expected modified_at to be populated")
+	}
 }
