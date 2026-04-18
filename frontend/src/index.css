@@ -181,8 +181,10 @@ button:disabled {
   padding: 12px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  max-height: 360px;
-  overflow: auto;
+  min-height: 280px;
+  max-height: min(62vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
@@ -249,8 +251,8 @@ details[open] > .agent-toggle::before {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 180px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: #f8fafc;
@@ -489,6 +491,24 @@ label small {
   display: block;
   margin-top: 6px;
   color: var(--muted);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.checkbox-row span {
+  font-weight: 600;
 }
 
 @media (max-width: 920px) {

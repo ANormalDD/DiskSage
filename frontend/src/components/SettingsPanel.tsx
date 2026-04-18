@@ -46,11 +46,21 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
             onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, base_url: e.target.value } })}
           />
         </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.llm.enable_web_search}
+            onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, enable_web_search: e.target.checked } })}
+          />
+          <span>启用网络搜索工具（Tavily）</span>
+        </label>
+        <small>关闭时模型不会调用网络搜索工具；开启后需配置 Tavily API Key 才会生效。</small>
         <label>
           Tavily API Key
           <input
             type="password"
             value={draft.llm.tavily_api_key}
+            disabled={!draft.llm.enable_web_search}
             onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, tavily_api_key: e.target.value } })}
           />
         </label>
@@ -58,6 +68,7 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
           Tavily Base URL
           <input
             value={draft.llm.tavily_base_url}
+            disabled={!draft.llm.enable_web_search}
             onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, tavily_base_url: e.target.value } })}
           />
           <small>默认 https://api.tavily.com</small>

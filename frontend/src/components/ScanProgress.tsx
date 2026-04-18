@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AnalyzeProgressEvent } from "../lib/types";
 
 type Props = {
@@ -232,6 +232,7 @@ export default function ScanProgress({
   defaultCollapsed = false,
 }: Props) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const [layoutVersion, setLayoutVersion] = useState(0);
   const turns = useMemo(() => buildTurns(llmOps), [llmOps]);
   const totalEvents = useMemo(
     () => turns.reduce((sum, turn) => sum + turn.bucket.reasonings.length + turn.bucket.texts.length + turn.bucket.tools.length + turn.bucket.statuses.length, 0),
@@ -242,7 +243,27 @@ export default function ScanProgress({
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [totalEvents]);
+  }, [llmOps.length, totalEvents, layoutVersion]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+
+    const onToggle = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || target.tagName.toLowerCase() !== "details") {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        setLayoutVersion((v) => v + 1);
+      });
+    };
+
+    el.addEventListener("toggle", onToggle, true);
+    return () => {
+      el.removeEventListener("toggle", onToggle, true);
+    };
+  }, []);
 
   const flowBody = (
     <>

@@ -7,6 +7,7 @@ export namespace models {
 	    base_url: string;
 	    max_tokens: number;
 	    max_turns: number;
+	    enable_web_search: boolean;
 	    tavily_api_key: string;
 	    tavily_base_url: string;
 	
@@ -22,6 +23,7 @@ export namespace models {
 	        this.base_url = source["base_url"];
 	        this.max_tokens = source["max_tokens"];
 	        this.max_turns = source["max_turns"];
+	        this.enable_web_search = source["enable_web_search"];
 	        this.tavily_api_key = source["tavily_api_key"];
 	        this.tavily_base_url = source["tavily_base_url"];
 	    }

@@ -213,7 +213,7 @@ func (a *Analyzer) Analyze(ctx context.Context, root models.DirNode) ([]models.R
 		TopNPerLevel: 20,
 		MinChildSize: 50 * 1024 * 1024,
 	})
-	system, user := BuildPrompt(compressed)
+	system, user := BuildPrompt(compressed, cfg)
 	analysisUsage := models.TokenUsage{}
 	maxTurns := cfg.MaxTurns
 	if maxTurns == 0 {
@@ -277,7 +277,7 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 		resp, err := client.Complete(ctx, LLMRequest{
 			System:     session.System,
 			User:       turnUser,
-			Tools:      DefaultToolDefinitions(),
+			Tools:      BuildToolDefinitions(cfg),
 			ToolChoice: session.ToolChoice,
 			Config:     cfg,
 		})
@@ -644,6 +644,14 @@ func executeToolCalls(ctx context.Context, toolCalls []ToolCall, scanDeeper func
 			}
 			results = append(results, "check_dir_content result:\n"+string(blob))
 		case ToolTavilySearch:
+			if !IsTavilySearchEnabled(cfg) {
+				msg := "tavily_search is disabled (enable_web_search=true and non-empty tavily_api_key required)"
+				if onExecuted != nil {
+					onExecuted(tc.Name, "", formatJSONForProgress(tc.Arguments), msg)
+				}
+				results = append(results, "tavily_search error:\n"+msg)
+				continue
+			}
 			var args struct {
 				Query       string `json:"query"`
 				SearchDepth string `json:"search_depth"`

@@ -1,6 +1,11 @@
 package analyzer
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+
+	"disksage/internal/models"
+)
 
 const (
 	ToolScanDeeper            = "scan_deeper"
@@ -21,7 +26,18 @@ type ToolCall struct {
 }
 
 func DefaultToolDefinitions() []ToolDefinition {
-	return []ToolDefinition{
+	return BuildToolDefinitions(models.DefaultAppConfig().LLM)
+}
+
+func IsTavilySearchEnabled(cfg models.LLMConfig) bool {
+	if !cfg.EnableWebSearch {
+		return false
+	}
+	return strings.TrimSpace(cfg.TavilyAPIKey) != ""
+}
+
+func BuildToolDefinitions(cfg models.LLMConfig) []ToolDefinition {
+	tools := []ToolDefinition{
 		{
 			Name:        ToolScanDeeper,
 			Description: "Scan specific directory with deeper depth",
@@ -45,7 +61,10 @@ func DefaultToolDefinitions() []ToolDefinition {
 				"required": []string{"path"},
 			},
 		},
-		{
+	}
+
+	if IsTavilySearchEnabled(cfg) {
+		tools = append(tools, ToolDefinition{
 			Name:        ToolTavilySearch,
 			Description: "Search web knowledge via Tavily for unknown folders/apps to determine whether they are safe to clean",
 			Parameters: map[string]any{
@@ -57,8 +76,11 @@ func DefaultToolDefinitions() []ToolDefinition {
 				},
 				"required": []string{"query"},
 			},
-		},
-		{
+		})
+	}
+
+	tools = append(tools,
+		ToolDefinition{
 			Name:        ToolSubmitRecommendations,
 			Description: "Submit final cleanup recommendations",
 			Parameters: map[string]any{
@@ -69,5 +91,7 @@ func DefaultToolDefinitions() []ToolDefinition {
 				"required": []string{"recommendations"},
 			},
 		},
-	}
+	)
+
+	return tools
 }

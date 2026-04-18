@@ -1,6 +1,11 @@
 package analyzer
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"disksage/internal/models"
+)
 
 const defaultSystemPrompt = `你是磁盘清理助手。分析目录树，识别可清理的内容。
 
@@ -19,10 +24,9 @@ const defaultSystemPrompt = `你是磁盘清理助手。分析目录树，识别
 - 对 AppData/Roaming、AppData/Local、OneDrive 根目录这类混合数据目录，未定位到具体可清理子目录前只能给 review/redirect
 
 工具调用规则（必须遵守）：
-- 你可以调用工具：scan_deeper(path, depth)、check_dir_content(path)、tavily_search(query, search_depth, max_results)、submit_recommendations(recommendations)
+- 你可以调用工具：scan_deeper(path, depth)、check_dir_content(path){{SEARCH_TOOL_ENTRY}}、submit_recommendations(recommendations)
 - 当目录用途不清晰但体积较大时，优先调用 scan_deeper 或 check_dir_content 获取证据
-- 当目录/应用用途仍不确定（例如第三方软件目录名难以判断）时，可调用 tavily_search 查询公开信息后再决策
-- check_dir_content 的返回包含 Path、CreatedAt、ModifiedAt、Stats；请结合 CreatedAt/ModifiedAt 判断是否为长期未使用的旧目录
+{{SEARCH_TOOL_GUIDE}}- check_dir_content 的返回包含 Path、CreatedAt、ModifiedAt、Stats；请结合 CreatedAt/ModifiedAt 判断是否为长期未使用的旧目录
 - 如果有多个候选目录需要取证，请在同一轮一次性调用多个工具（multi tool calls）
 - 若工具返回错误（路径不存在、权限不足、参数不合法），请根据错误修正参数并继续调用工具，不要结束分析
 - 完成分析后，必须调用 submit_recommendations 提交最终结果
@@ -41,8 +45,16 @@ const defaultSystemPrompt = `你是磁盘清理助手。分析目录树，识别
 	command: string
 	risk: string`
 
-func BuildPrompt(compressedTree string) (string, string) {
-	system := defaultSystemPrompt
+func BuildPrompt(compressedTree string, cfg models.LLMConfig) (string, string) {
+	searchToolEntry := ""
+	searchToolGuide := ""
+	if IsTavilySearchEnabled(cfg) {
+		searchToolEntry = "、tavily_search(query, search_depth, max_results)"
+		searchToolGuide = "- 当目录/应用用途仍不确定（例如第三方软件目录名难以判断）时，可调用 tavily_search 查询公开信息后再决策\n"
+	}
+
+	system := strings.ReplaceAll(defaultSystemPrompt, "{{SEARCH_TOOL_ENTRY}}", searchToolEntry)
+	system = strings.ReplaceAll(system, "{{SEARCH_TOOL_GUIDE}}", searchToolGuide)
 	user := fmt.Sprintf("请分析以下压缩目录树并给出结构化建议。若信息不足请先调用工具获取更多上下文。最终必须输出有效 JSON 数组或通过 submit_recommendations 提交。\n\n%s", compressedTree)
 	return system, user
 }
