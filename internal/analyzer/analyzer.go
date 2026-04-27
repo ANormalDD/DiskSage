@@ -281,6 +281,8 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 
 		turnUser := buildTurnUserPrompt(session.User, session.CtxNotes)
 		streamedAny := false
+		streamedContent := strings.Builder{}
+		streamedReasoning := strings.Builder{}
 		resp, err := client.Complete(ctx, LLMRequest{
 			System:     session.System,
 			User:       turnUser,
@@ -290,16 +292,23 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			OnStreamDelta: func(delta LLMStreamDelta) {
 				if delta.Reasoning != "" {
 					streamedAny = true
+					streamedReasoning.WriteString(delta.Reasoning)
 					a.emitProgress(AnalysisProgressEvent{Type: "reasoning", Turn: turn, Content: "模型推理（流式）", Reason: truncateProgressText(delta.Reasoning, 12000)})
 				}
 				if delta.Content != "" {
 					streamedAny = true
+					streamedContent.WriteString(delta.Content)
 					a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: truncateProgressText(delta.Content, 12000)})
 				}
 			},
 		})
 		analysisUsage = addUsage(analysisUsage, resp.Usage)
 		if err != nil {
+			if note := interruptedStreamingNote(turn, streamedReasoning.String(), streamedContent.String()); note != "" {
+				session.CtxNotes = append(session.CtxNotes, note)
+				session.RawOutputs = append(session.RawOutputs, note)
+				session.NextTurn++
+			}
 			if session.ToolChoice == "required" && strings.Contains(strings.ToLower(err.Error()), "tool_choice") {
 				session.ToolChoice = "auto"
 				session.CtxNotes = append(session.CtxNotes, "当前模型端点可能不支持 tool_choice=required。请改为严格按工具调用或直接输出 JSON 数组。")
@@ -537,6 +546,25 @@ func buildTurnUserPrompt(base string, notes []string) string {
 		return base
 	}
 	return base + "\n\n会话上下文（按时间顺序）：\n" + strings.Join(notes, "\n\n")
+}
+
+func interruptedStreamingNote(turn int, reasoning, content string) string {
+	reasoning = strings.TrimSpace(reasoning)
+	content = strings.TrimSpace(content)
+	if reasoning == "" && content == "" {
+		return ""
+	}
+
+	parts := []string{
+		fmt.Sprintf("上一轮（turn %d）流式输出在中断前已经收到部分内容。不要重复这些内容，请基于它们继续完成当前分析。", turn),
+	}
+	if reasoning != "" {
+		parts = append(parts, "已收到的推理片段：\n"+reasoning)
+	}
+	if content != "" {
+		parts = append(parts, "已收到的回答片段：\n"+content)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func autoProbeLargeDirs(root models.DirNode, scanDeeper func(path string, depth int) (models.DirNode, error)) []string {

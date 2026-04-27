@@ -53,6 +53,36 @@ func (c *countingClient) Complete(ctx context.Context, req LLMRequest) (LLMRespo
 	return LLMResponse{Content: "继续分析"}, nil
 }
 
+type interruptedStreamClient struct {
+	calls       int
+	capturedReq []LLMRequest
+}
+
+func (c *interruptedStreamClient) Complete(ctx context.Context, req LLMRequest) (LLMResponse, error) {
+	_ = ctx
+	c.calls++
+	c.capturedReq = append(c.capturedReq, req)
+
+	if c.calls == 1 {
+		if req.OnStreamDelta != nil {
+			req.OnStreamDelta(LLMStreamDelta{Reasoning: "先检查下载目录"})
+			req.OnStreamDelta(LLMStreamDelta{Content: "已发现 Downloads 下有大文件"})
+		}
+		return LLMResponse{}, errors.New("context deadline exceeded")
+	}
+
+	return LLMResponse{
+		Recommendations: []models.Recommendation{{
+			Path:        "D:/Downloads/archive.iso",
+			Size:        100,
+			Category:    models.CategoryConfirm,
+			Reason:      "large archive",
+			CleanMethod: models.MethodRedirect,
+			Risk:        "medium",
+		}},
+	}, nil
+}
+
 func TestHeuristicAnalyzer(t *testing.T) {
 	a := NewAnalyzer(Options{Client: NewHeuristicClient()})
 	root := models.DirNode{
@@ -326,6 +356,41 @@ func TestAnalyzerKeepsSessionWhenContinueGetsTimeoutAgain(t *testing.T) {
 	}
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 recommendation, got %d", len(recs))
+	}
+}
+
+func TestAnalyzerContinueCarriesInterruptedStreamingOutputIntoNextTurn(t *testing.T) {
+	client := &interruptedStreamClient{}
+	a := NewAnalyzer(Options{Client: client})
+
+	_, err := a.Analyze(context.Background(), models.DirNode{Path: "D:/", Size: 1})
+	if err == nil {
+		t.Fatalf("expected interrupted streaming error")
+	}
+	if !a.HasPendingAnalysis() {
+		t.Fatalf("expected pending analysis after interrupted stream")
+	}
+
+	recs, err := a.Continue(context.Background())
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 recommendation, got %d", len(recs))
+	}
+	if len(client.capturedReq) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(client.capturedReq))
+	}
+
+	resumePrompt := client.capturedReq[1].User
+	if !strings.Contains(resumePrompt, "流式输出在中断前已经收到部分内容") {
+		t.Fatalf("expected resume prompt to mention interrupted stream, got: %s", resumePrompt)
+	}
+	if !strings.Contains(resumePrompt, "已发现 Downloads 下有大文件") {
+		t.Fatalf("expected resume prompt to include partial assistant output, got: %s", resumePrompt)
+	}
+	if !strings.Contains(resumePrompt, "先检查下载目录") {
+		t.Fatalf("expected resume prompt to include partial reasoning, got: %s", resumePrompt)
 	}
 }
 
