@@ -83,12 +83,16 @@ func sanitizeRecommendations(in []models.Recommendation) []models.Recommendation
 		if item.Path == "" {
 			continue
 		}
+		// Reject wildcard paths (e.g. C:\Users\foo\*.log) – the backend cannot
+		// measure or delete glob patterns; the LLM must submit a concrete directory.
+		if strings.ContainsAny(item.Path, "*?") {
+			continue
+		}
 		if _, ok := seen[item.Path]; ok {
 			continue
 		}
-		if item.Size < 0 {
-			item.Size = 0
-		}
+		// Always zero the LLM-provided size; the backend measures it via resolveRecommendationSizes.
+		item.Size = 0
 		if item.CleanMethod == "" {
 			item.CleanMethod = models.MethodRecycle
 		}

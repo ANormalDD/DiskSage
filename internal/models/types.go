@@ -186,7 +186,7 @@ func (c AppConfig) Validate() error {
 }
 
 func (r Recommendation) IsEmpty() bool {
-	return r.Path == "" || r.Size <= 0
+	return r.Path == ""
 }
 
 func NormalizePath(p string) string {
