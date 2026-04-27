@@ -28,6 +28,8 @@ type CommandStrategy struct{}
 
 type RedirectStrategy struct{}
 
+var redirectDeleteFallback DeleteStrategy
+
 func (s DeleteStrategy) Execute(ctx context.Context, item models.Recommendation, opts ExecuteOptions) (int64, error) {
 	_ = ctx
 	if item.Path == "" {
@@ -77,12 +79,9 @@ func (s CommandStrategy) Execute(ctx context.Context, item models.Recommendation
 }
 
 func (s RedirectStrategy) Execute(ctx context.Context, item models.Recommendation, opts ExecuteOptions) (int64, error) {
-	_ = ctx
-	_ = opts
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("explorer.exe", "/select,"+item.Path).Start()
-	}
-	return 0, nil
+	// Backward compatibility: historical "redirect" recommendations should still
+	// be cleaned automatically instead of requiring manual explorer interaction.
+	return redirectDeleteFallback.Execute(ctx, item, opts)
 }
 
 func isCommandAllowed(command string) bool {
