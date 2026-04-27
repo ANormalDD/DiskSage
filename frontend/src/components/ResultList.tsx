@@ -14,7 +14,7 @@ export default function ResultList({ recommendations, selected, onToggle }: Prop
   return (
     <div className="grid-two">
       {categories.map((category) => {
-        const rows = recommendations.filter((row) => row.category === category);
+        const rows = recommendations.filter((row) => row.category === category).sort((a, b) => b.size - a.size);
         const total = rows.reduce((sum, row) => sum + row.size, 0);
         return (
           <section className="category" key={category}>

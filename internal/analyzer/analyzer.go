@@ -437,6 +437,7 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			}
 			// finish_analysis signals the model is done.
 			if finished {
+				a.emitProgress(AnalysisProgressEvent{Type: "resolving", Turn: turn, Content: "LLM 输出完毕，正在为您测量真实目录占用，这可能需要一点时间..."})
 				allRecs := resolveRecommendationSizes(session.AccumulatedRecs, scanDeeper)
 				if normalizeUsage(analysisUsage).TotalTokens == 0 {
 					analysisUsage = estimateUsageFromTexts(session.System, recommendationsAsText(allRecs))
@@ -468,6 +469,7 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			})
 
 			if parsed, parseErr := ParseRecommendations(content); parseErr == nil {
+				a.emitProgress(AnalysisProgressEvent{Type: "resolving", Turn: turn, Content: "LLM 输出完毕，正在为您测量真实目录占用，这可能需要一点时间..."})
 				parsed = resolveRecommendationSizes(parsed, scanDeeper)
 				if normalizeUsage(analysisUsage).TotalTokens == 0 {
 					analysisUsage = estimateUsageFromTexts(session.System, content)
