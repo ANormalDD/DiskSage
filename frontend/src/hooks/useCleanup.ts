@@ -10,6 +10,11 @@ function isElevationRequiredError(message: string): boolean {
   return message.toUpperCase().includes(ELEVATION_REQUIRED_TOKEN);
 }
 
+function isRateLimitLikeError(message: string): boolean {
+  const text = (message || "").toLowerCase();
+  return text.includes("rate limit") || text.includes("too many requests") || text.includes("429");
+}
+
 export function useCleanup() {
   const [stage, setStage] = useState<Stage>("select");
   const [progress, setProgress] = useState(0);
@@ -102,7 +107,11 @@ export function useCleanup() {
         setCanContinue(true);
         setStage("analyzing");
         setProgress(94);
-        setError(`分析被限流中断：${message || "触发 API rate limit"}。请等待后点击继续迭代。`);
+        if (isRateLimitLikeError(message)) {
+          setError(`分析被限流中断：${message || "触发 API rate limit"}。请等待后点击继续迭代。`);
+        } else {
+          setError(`分析中断：${message || "网络或模型服务异常"}。可点击继续重试，从上次进度继续。`);
+        }
       } else {
         setError(message || "扫描失败，请检查配置后重试");
         setStage("select");
@@ -161,7 +170,11 @@ export function useCleanup() {
         setCanContinue(true);
         setStage("analyzing");
         setProgress(95);
-        setError(`分析仍处于限流窗口：${message || "请稍后再继续"}`);
+        if (isRateLimitLikeError(message)) {
+          setError(`分析仍处于限流窗口：${message || "请稍后再继续"}`);
+        } else {
+          setError(`分析继续失败：${message || "网络或模型服务异常"}。可再次点击继续重试。`);
+        }
       } else {
         setError(message || "分析继续失败");
         setStage("select");

@@ -157,7 +157,7 @@ func (a *Analyzer) Continue(ctx context.Context) ([]models.Recommendation, error
 
 	a.emitProgress(AnalysisProgressEvent{Type: "resume", Turn: session.NextTurn, Content: "继续迭代分析"})
 	recs, err := a.runSession(ctx, session, client, cfg, scanDeeper, checkDirContent)
-	if err == nil || !errors.Is(err, ErrRateLimitPaused) {
+	if err == nil || !isResumableAnalysisError(err) {
 		a.sessionMu.Lock()
 		if a.session == session {
 			a.session = nil
@@ -253,7 +253,7 @@ func (a *Analyzer) Analyze(ctx context.Context, root models.DirNode) ([]models.R
 	a.sessionMu.Unlock()
 
 	recs, err := a.runSession(ctx, session, client, cfg, scanDeeper, checkDirContent)
-	if err == nil || !errors.Is(err, ErrRateLimitPaused) {
+	if err == nil || !isResumableAnalysisError(err) {
 		a.sessionMu.Lock()
 		if a.session == session {
 			a.session = nil
@@ -440,6 +440,40 @@ func isRateLimitError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "too many requests") || strings.Contains(msg, " 429") || strings.Contains(msg, "\"429\"") || strings.Contains(msg, "status: 429")
+}
+
+func isResumableAnalysisError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrRateLimitPaused) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	retryableHints := []string{
+		"timeout",
+		"deadline exceeded",
+		"network",
+		"connection reset",
+		"connection refused",
+		"temporary",
+		"service unavailable",
+		"gateway timeout",
+		"status: 503",
+		"status=503",
+		"status code: 503",
+	}
+	for _, hint := range retryableHints {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func extractToolPath(tc ToolCall) string {

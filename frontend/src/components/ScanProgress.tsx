@@ -344,9 +344,9 @@ export default function ScanProgress({
 
       {canContinue && (
         <div className="continue-row">
-          <p>检测到限流中断，可在窗口恢复后手动继续迭代。</p>
+          <p>分析已中断，可在网络恢复后继续重试，并从上次进度接续。</p>
           <button className="primary" disabled={busy} onClick={() => void onContinue()}>
-            Continue
+            继续重试
           </button>
         </div>
       )}

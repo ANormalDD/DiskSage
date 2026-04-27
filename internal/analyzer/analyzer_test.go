@@ -248,6 +248,87 @@ func TestAnalyzerCanContinueAfterRateLimitPause(t *testing.T) {
 	}
 }
 
+func TestAnalyzerCanContinueAfterTimeoutError(t *testing.T) {
+	client := &sequenceClient{
+		responses: []LLMResponse{
+			{},
+			{
+				Recommendations: []models.Recommendation{{
+					Path:        "D:/temp",
+					Size:        100,
+					Category:    models.CategorySafe,
+					Reason:      "ok",
+					CleanMethod: models.MethodRecycle,
+					Risk:        "low",
+				}},
+			},
+		},
+		errs: []error{errors.New("llm request timeout after 2m0s: context deadline exceeded"), nil},
+	}
+
+	a := NewAnalyzer(Options{Client: client})
+	_, err := a.Analyze(context.Background(), models.DirNode{Path: "D:/", Size: 1})
+	if err == nil {
+		t.Fatalf("expected timeout error")
+	}
+	if !a.HasPendingAnalysis() {
+		t.Fatalf("expected pending analysis after timeout error")
+	}
+
+	recs, err := a.Continue(context.Background())
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 recommendation, got %d", len(recs))
+	}
+	if a.HasPendingAnalysis() {
+		t.Fatalf("expected no pending analysis after successful continue")
+	}
+}
+
+func TestAnalyzerKeepsSessionWhenContinueGetsTimeoutAgain(t *testing.T) {
+	client := &sequenceClient{
+		responses: []LLMResponse{
+			{},
+			{},
+			{
+				Recommendations: []models.Recommendation{{
+					Path:        "D:/temp",
+					Size:        100,
+					Category:    models.CategorySafe,
+					Reason:      "ok",
+					CleanMethod: models.MethodRecycle,
+					Risk:        "low",
+				}},
+			},
+		},
+		errs: []error{errors.New("429 Too Many Requests"), errors.New("context deadline exceeded"), nil},
+	}
+
+	a := NewAnalyzer(Options{Client: client})
+	_, err := a.Analyze(context.Background(), models.DirNode{Path: "D:/", Size: 1})
+	if !errors.Is(err, ErrRateLimitPaused) {
+		t.Fatalf("expected rate limit pause error, got: %v", err)
+	}
+
+	_, err = a.Continue(context.Background())
+	if err == nil {
+		t.Fatalf("expected timeout error on continue")
+	}
+	if !a.HasPendingAnalysis() {
+		t.Fatalf("expected pending analysis after timeout on continue")
+	}
+
+	recs, err := a.Continue(context.Background())
+	if err != nil {
+		t.Fatalf("second continue failed: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 recommendation, got %d", len(recs))
+	}
+}
+
 func TestAnalyzerEmitsToolCallProgress(t *testing.T) {
 	client := &sequenceClient{
 		responses: []LLMResponse{
