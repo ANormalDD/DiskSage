@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,6 +48,9 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, req LLMRequest) (
 			{"role": "user", "content": req.User},
 		},
 	}
+	if req.Config.EnableStreaming {
+		body["stream"] = true
+	}
 	if len(req.Tools) > 0 {
 		body["tools"] = toOpenAITools(req.Tools)
 		choice := strings.TrimSpace(req.ToolChoice)
@@ -58,11 +63,12 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, req LLMRequest) (
 		body["max_tokens"] = req.Config.MaxTokens
 	}
 	payload, _ := json.Marshal(body)
+	timeout := resolveLLMTimeout(req.Config)
 
-	raw, statusCode, err := c.doChatCompletion(ctx, base+"/chat/completions", req.Config.APIKey, payload)
+	raw, statusCode, err := c.doChatCompletion(ctx, base+"/chat/completions", req.Config.APIKey, payload, timeout, req.Config.EnableStreaming, req.OnStreamDelta)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return LLMResponse{}, fmt.Errorf("llm request timeout after %s, please check network/base_url: %w", defaultLLMTimeout.String(), err)
+		if isTimeoutErr(err) {
+			return LLMResponse{}, fmt.Errorf("llm request timeout after %s, please check network/base_url: %w", timeout.String(), err)
 		}
 		return LLMResponse{}, err
 	}
@@ -316,7 +322,28 @@ func toOpenAITools(defs []ToolDefinition) []map[string]any {
 	return tools
 }
 
-func (c *OpenAICompatibleClient) doChatCompletion(ctx context.Context, url, apiKey string, payload []byte) ([]byte, int, error) {
+func resolveLLMTimeout(cfg models.LLMConfig) time.Duration {
+	if cfg.RequestTimeoutSeconds <= 0 {
+		return defaultLLMTimeout
+	}
+	return time.Duration(cfg.RequestTimeoutSeconds) * time.Second
+}
+
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
+}
+
+func (c *OpenAICompatibleClient) doChatCompletion(ctx context.Context, url, apiKey string, payload []byte, timeout time.Duration, stream bool, onStreamDelta func(delta LLMStreamDelta)) ([]byte, int, error) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -326,7 +353,10 @@ func (c *OpenAICompatibleClient) doChatCompletion(ctx context.Context, url, apiK
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-		resp, err := c.httpClient.Do(httpReq)
+		httpClient := *c.httpClient
+		httpClient.Timeout = timeout
+
+		resp, err := httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
 			if attempt == 0 && isRetryableNetErr(err) {
@@ -334,6 +364,16 @@ func (c *OpenAICompatibleClient) doChatCompletion(ctx context.Context, url, apiK
 				continue
 			}
 			return nil, 0, err
+		}
+
+		if stream && resp.StatusCode < 300 {
+			raw, readErr := parseStreamedChatCompletion(resp.Body, onStreamDelta)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				return nil, 0, readErr
+			}
+
+			return raw, resp.StatusCode, nil
 		}
 
 		raw, readErr := io.ReadAll(resp.Body)
@@ -355,6 +395,236 @@ func (c *OpenAICompatibleClient) doChatCompletion(ctx context.Context, url, apiK
 		return nil, 0, lastErr
 	}
 	return nil, 0, fmt.Errorf("llm request failed")
+}
+
+type streamedToolCallBuilder struct {
+	Name       string
+	Arguments  strings.Builder
+	FirstOrder int
+}
+
+func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStreamDelta)) ([]byte, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	dataLines := make([]string, 0, 4)
+	plainLines := make([]string, 0, 16)
+	seenSSEData := false
+	contentParts := make([]string, 0, 64)
+	reasoningParts := make([]string, 0, 16)
+	usage := map[string]any{}
+	toolCallBuilders := make(map[int]*streamedToolCallBuilder)
+	orderCounter := 0
+
+	consumeDataBlock := func(block []string) error {
+		if len(block) == 0 {
+			return nil
+		}
+
+		payload := strings.TrimSpace(strings.Join(block, "\n"))
+		if payload == "" || payload == "[DONE]" {
+			return nil
+		}
+
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return fmt.Errorf("parse stream chunk failed: %w", err)
+		}
+
+		if u := asMap(chunk["usage"]); len(u) > 0 {
+			for k, v := range u {
+				usage[k] = v
+			}
+		}
+
+		for _, choiceAny := range asSlice(chunk["choices"]) {
+			choice := asMap(choiceAny)
+			delta := asMap(choice["delta"])
+			if len(delta) == 0 {
+				delta = asMap(choice["message"])
+			}
+			if len(delta) == 0 {
+				continue
+			}
+
+			if piece := extractContent(delta["content"]); strings.TrimSpace(piece) != "" {
+				contentParts = append(contentParts, piece)
+				if onStreamDelta != nil {
+					onStreamDelta(LLMStreamDelta{Content: piece})
+				}
+			}
+
+			if reasoningPiece := extractContent(delta["reasoning"]); strings.TrimSpace(reasoningPiece) != "" {
+				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
+				if onStreamDelta != nil {
+					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
+				}
+			}
+			if reasoningPiece := extractContent(delta["reasoning_content"]); strings.TrimSpace(reasoningPiece) != "" {
+				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
+				if onStreamDelta != nil {
+					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
+				}
+			}
+
+			for _, part := range asSlice(delta["content"]) {
+				p := asMap(part)
+				if len(p) == 0 {
+					continue
+				}
+				partType := strings.ToLower(strings.TrimSpace(asString(p["type"])))
+				if partType == "reasoning" || partType == "reasoning_content" || partType == "thinking" {
+					for _, candidate := range []string{
+						extractContent(p["text"]),
+						extractContent(p["content"]),
+						extractContent(p["reasoning"]),
+						extractContent(p["reasoning_content"]),
+						extractContent(p["thinking"]),
+					} {
+						if strings.TrimSpace(candidate) == "" {
+							continue
+						}
+						reasoningParts = appendUniqueText(reasoningParts, candidate)
+						if onStreamDelta != nil {
+							onStreamDelta(LLMStreamDelta{Reasoning: candidate})
+						}
+					}
+				}
+			}
+
+			for _, tcAny := range asSlice(delta["tool_calls"]) {
+				tcMap := asMap(tcAny)
+				if len(tcMap) == 0 {
+					continue
+				}
+
+				idx := asInt(tcMap["index"])
+				builder, exists := toolCallBuilders[idx]
+				if !exists {
+					builder = &streamedToolCallBuilder{FirstOrder: orderCounter}
+					toolCallBuilders[idx] = builder
+					orderCounter++
+				}
+
+				fn := asMap(tcMap["function"])
+				if name := strings.TrimSpace(asString(fn["name"])); name != "" {
+					builder.Name = name
+				}
+				if builder.Name == "" {
+					if name := strings.TrimSpace(asString(tcMap["name"])); name != "" {
+						builder.Name = name
+					}
+				}
+
+				argValue := fn["arguments"]
+				if argValue == nil {
+					argValue = tcMap["arguments"]
+				}
+				switch args := argValue.(type) {
+				case string:
+					builder.Arguments.WriteString(args)
+				case nil:
+				default:
+					blob, marshalErr := json.Marshal(args)
+					if marshalErr == nil {
+						builder.Arguments.Write(blob)
+					}
+				}
+			}
+		}
+
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			if err := consumeDataBlock(dataLines); err != nil {
+				return nil, err
+			}
+			dataLines = dataLines[:0]
+			continue
+		}
+		if strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			seenSSEData = true
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			continue
+		}
+		plainLines = append(plainLines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if !seenSSEData {
+		raw := strings.TrimSpace(strings.Join(plainLines, "\n"))
+		if raw == "" {
+			return nil, fmt.Errorf("empty streaming response")
+		}
+		return []byte(raw), nil
+	}
+	if err := consumeDataBlock(dataLines); err != nil {
+		return nil, err
+	}
+
+	indexes := make([]int, 0, len(toolCallBuilders))
+	for idx := range toolCallBuilders {
+		indexes = append(indexes, idx)
+	}
+	sort.Ints(indexes)
+
+	toolCalls := make([]ToolCall, 0, len(indexes))
+	for _, idx := range indexes {
+		builder := toolCallBuilders[idx]
+		if strings.TrimSpace(builder.Name) == "" {
+			continue
+		}
+		args := strings.TrimSpace(builder.Arguments.String())
+		if args == "" {
+			args = "{}"
+		}
+		toolCalls = append(toolCalls, ToolCall{
+			Name:      builder.Name,
+			Arguments: json.RawMessage([]byte(args)),
+		})
+	}
+
+	message := map[string]any{
+		"content": strings.Join(contentParts, ""),
+	}
+	if len(reasoningParts) > 0 {
+		message["reasoning_content"] = strings.Join(reasoningParts, "\n")
+	}
+	if len(toolCalls) > 0 {
+		items := make([]map[string]any, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			items = append(items, map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":      tc.Name,
+					"arguments": string(tc.Arguments),
+				},
+			})
+		}
+		message["tool_calls"] = items
+	}
+
+	finalPayload := map[string]any{
+		"choices": []map[string]any{{
+			"message": message,
+		}},
+	}
+	if len(usage) > 0 {
+		finalPayload["usage"] = usage
+	}
+
+	blob, err := json.Marshal(finalPayload)
+	if err != nil {
+		return nil, err
+	}
+	return blob, nil
 }
 
 func isRetryableNetErr(err error) bool {

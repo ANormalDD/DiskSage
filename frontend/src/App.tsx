@@ -17,6 +17,8 @@ const defaultConfig: AppConfig = {
     base_url: "https://api.openai.com/v1",
     max_tokens: 1200,
     max_turns: 6,
+    request_timeout_seconds: 120,
+    enable_streaming: false,
     enable_web_search: false,
     tavily_api_key: "",
     tavily_base_url: "https://api.tavily.com",

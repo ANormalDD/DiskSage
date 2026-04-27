@@ -86,6 +86,8 @@ body {
 .error-banner p {
   margin: 0;
   flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .error-actions {
@@ -328,6 +330,8 @@ details[open] > .agent-tool-summary::before {
   font-size: 12px;
   line-height: 1.4;
   color: #56637a;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .agent-status.tone-warn {

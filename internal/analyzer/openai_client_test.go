@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -357,5 +358,185 @@ func TestOpenAIClientExtractsReasoningContent(t *testing.T) {
 	}
 	if !strings.Contains(resp.Reasoning, "先定位大目录") {
 		t.Fatalf("unexpected reasoning: %s", resp.Reasoning)
+	}
+}
+
+func TestOpenAIClientParsesStreamingResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("invalid json payload: %v", err)
+		}
+		if stream, _ := payload["stream"].(bool); !stream {
+			t.Fatalf("expected stream=true in payload")
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"，世界\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:          "k",
+			BaseURL:         server.URL,
+			Model:           "m",
+			EnableStreaming: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if resp.Content != "你好，世界" {
+		t.Fatalf("unexpected streamed content: %s", resp.Content)
+	}
+	if resp.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected streamed usage: %+v", resp.Usage)
+	}
+}
+
+func TestOpenAIClientStreamingFallbackToPlainJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "choices":[
+    {
+      "message":{
+        "content":"[{\"path\":\"D:/tmp\",\"size\":1,\"category\":\"safe\",\"reason\":\"x\",\"clean_method\":\"recycle\",\"command\":\"\",\"risk\":\"low\"}]"
+      }
+    }
+  ],
+  "usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}
+}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:                "k",
+			BaseURL:               server.URL,
+			Model:                 "m",
+			EnableStreaming:       true,
+			RequestTimeoutSeconds: 120,
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if len(resp.Recommendations) != 1 {
+		t.Fatalf("expected 1 recommendation from plain JSON fallback, got %d", len(resp.Recommendations))
+	}
+}
+
+func TestOpenAIClientParsesStreamingToolCallFragments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		chunk1 := map[string]any{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
+						"index": 0,
+						"function": map[string]any{
+							"name":      "scan_deeper",
+							"arguments": `{"path":"D:/temp",`,
+						},
+					}},
+				},
+			}},
+		}
+		chunk2 := map[string]any{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
+						"index": 0,
+						"function": map[string]any{
+							"arguments": `"depth":3}`,
+						},
+					}},
+				},
+			}},
+		}
+
+		blob1, _ := json.Marshal(chunk1)
+		blob2, _ := json.Marshal(chunk2)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", string(blob1))
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", string(blob2))
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:                "k",
+			BaseURL:               server.URL,
+			Model:                 "m",
+			EnableStreaming:       true,
+			RequestTimeoutSeconds: 120,
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != ToolScanDeeper {
+		t.Fatalf("unexpected tool name: %s", resp.ToolCalls[0].Name)
+	}
+	if !strings.Contains(string(resp.ToolCalls[0].Arguments), "depth") {
+		t.Fatalf("expected fragmented arguments to merge, got: %s", string(resp.ToolCalls[0].Arguments))
+	}
+}
+
+func TestOpenAIClientStreamingInvokesDeltaCallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"A\",\"reasoning_content\":\"R\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	deltaContent := ""
+	deltaReasoning := ""
+	_, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:                "k",
+			BaseURL:               server.URL,
+			Model:                 "m",
+			EnableStreaming:       true,
+			RequestTimeoutSeconds: 120,
+		},
+		OnStreamDelta: func(delta LLMStreamDelta) {
+			deltaContent += delta.Content
+			deltaReasoning += delta.Reasoning
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if deltaContent != "A" {
+		t.Fatalf("unexpected stream delta content: %s", deltaContent)
+	}
+	if deltaReasoning != "R" {
+		t.Fatalf("unexpected stream delta reasoning: %s", deltaReasoning)
 	}
 }

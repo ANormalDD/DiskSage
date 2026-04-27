@@ -12,6 +12,7 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
   const [draft, setDraft] = useState(config);
   const maxTokensValid = draft.llm.max_tokens === -1 || draft.llm.max_tokens > 0;
   const maxTurnsValid = draft.llm.max_turns === -1 || draft.llm.max_turns > 0;
+  const timeoutValid = draft.llm.request_timeout_seconds > 0;
 
   return (
     <div className="overlay">
@@ -46,6 +47,30 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
             onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, base_url: e.target.value } })}
           />
         </label>
+        <label>
+          请求超时（秒）
+          <input
+            type="number"
+            min={1}
+            value={draft.llm.request_timeout_seconds}
+            onChange={(e) => {
+              const parsed = Number(e.target.value);
+              const next = Number.isFinite(parsed) ? Math.trunc(parsed) : 120;
+              setDraft({ ...draft, llm: { ...draft.llm, request_timeout_seconds: next } });
+            }}
+          />
+          <small>单次 LLM 请求超时时间，建议 60-300 秒。</small>
+          {!timeoutValid && <small>请输入大于 0 的整数。</small>}
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.llm.enable_streaming}
+            onChange={(e) => setDraft({ ...draft, llm: { ...draft.llm, enable_streaming: e.target.checked } })}
+          />
+          <span>启用流式输出（开 / 关）</span>
+        </label>
+        <small>开启后会使用流式返回，可减少首字等待，但取决于模型服务端是否支持。</small>
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -109,7 +134,7 @@ export default function SettingsPanel({ config, onSave, onClose, saveError }: Pr
           </button>
           <button
             className="primary"
-            disabled={!maxTokensValid || !maxTurnsValid}
+            disabled={!maxTokensValid || !maxTurnsValid || !timeoutValid}
             onClick={() => {
               void onSave(draft);
             }}

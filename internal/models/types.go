@@ -114,15 +114,17 @@ type CleanSummary struct {
 }
 
 type LLMConfig struct {
-	Provider        string `json:"provider"`
-	APIKey          string `json:"api_key"`
-	Model           string `json:"model"`
-	BaseURL         string `json:"base_url"`
-	MaxTokens       int    `json:"max_tokens"`
-	MaxTurns        int    `json:"max_turns"`
-	EnableWebSearch bool   `json:"enable_web_search"`
-	TavilyAPIKey    string `json:"tavily_api_key"`
-	TavilyBaseURL   string `json:"tavily_base_url"`
+	Provider              string `json:"provider"`
+	APIKey                string `json:"api_key"`
+	Model                 string `json:"model"`
+	BaseURL               string `json:"base_url"`
+	MaxTokens             int    `json:"max_tokens"`
+	MaxTurns              int    `json:"max_turns"`
+	RequestTimeoutSeconds int    `json:"request_timeout_seconds"`
+	EnableStreaming       bool   `json:"enable_streaming"`
+	EnableWebSearch       bool   `json:"enable_web_search"`
+	TavilyAPIKey          string `json:"tavily_api_key"`
+	TavilyBaseURL         string `json:"tavily_base_url"`
 }
 
 type TokenUsage struct {
@@ -151,13 +153,15 @@ type AppConfig struct {
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
 		LLM: LLMConfig{
-			Provider:        "openai",
-			Model:           "gpt-4o-mini",
-			BaseURL:         "https://api.openai.com/v1",
-			MaxTokens:       1200,
-			MaxTurns:        6,
-			EnableWebSearch: false,
-			TavilyBaseURL:   "https://api.tavily.com",
+			Provider:              "openai",
+			Model:                 "gpt-4o-mini",
+			BaseURL:               "https://api.openai.com/v1",
+			MaxTokens:             1200,
+			MaxTurns:              6,
+			RequestTimeoutSeconds: 120,
+			EnableStreaming:       false,
+			EnableWebSearch:       false,
+			TavilyBaseURL:         "https://api.tavily.com",
 		},
 	}
 }
@@ -168,6 +172,9 @@ func (c AppConfig) Validate() error {
 	}
 	if c.LLM.MaxTurns == 0 || c.LLM.MaxTurns < -1 {
 		return errors.New("max turns must be positive or -1 (unlimited)")
+	}
+	if c.LLM.RequestTimeoutSeconds <= 0 {
+		return errors.New("request timeout seconds must be positive")
 	}
 	if c.LLM.Provider == "" {
 		return errors.New("provider cannot be empty")

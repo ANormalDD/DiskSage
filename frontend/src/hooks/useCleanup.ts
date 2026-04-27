@@ -15,6 +15,36 @@ function isRateLimitLikeError(message: string): boolean {
   return text.includes("rate limit") || text.includes("too many requests") || text.includes("429");
 }
 
+function appendAnalyzeEvent(prev: AnalyzeProgressEvent[], event: AnalyzeProgressEvent): AnalyzeProgressEvent[] {
+  const next = [...prev];
+  const last = next[next.length - 1];
+
+  const canMerge =
+    !!last &&
+    last.turn === event.turn &&
+    last.type === event.type &&
+    (event.type === "assistant_text" || event.type === "reasoning");
+
+  if (canMerge) {
+    const merged: AnalyzeProgressEvent = { ...last };
+    if (event.type === "assistant_text") {
+      merged.content = `${last.content || ""}${event.content || ""}`;
+    }
+    if (event.type === "reasoning") {
+      merged.reason = `${last.reason || ""}${event.reason || ""}`;
+    }
+    merged.at = event.at || last.at;
+    next[next.length - 1] = merged;
+  } else {
+    next.push(event);
+  }
+
+  if (next.length > 80) {
+    return next.slice(next.length - 80);
+  }
+  return next;
+}
+
 export function useCleanup() {
   const [stage, setStage] = useState<Stage>("select");
   const [progress, setProgress] = useState(0);
@@ -67,13 +97,7 @@ export function useCleanup() {
       if (!event.type && !event.content && !event.tool && !event.path) {
         return;
       }
-      setAnalyzeLiveOps((prev) => {
-        const next = [...prev, event];
-        if (next.length > 80) {
-          return next.slice(next.length - 80);
-        }
-        return next;
-      });
+      setAnalyzeLiveOps((prev) => appendAnalyzeEvent(prev, event));
     });
 
     try {
@@ -135,13 +159,7 @@ export function useCleanup() {
       if (!event.type && !event.content && !event.tool && !event.path) {
         return;
       }
-      setAnalyzeLiveOps((prev) => {
-        const next = [...prev, event];
-        if (next.length > 80) {
-          return next.slice(next.length - 80);
-        }
-        return next;
-      });
+      setAnalyzeLiveOps((prev) => appendAnalyzeEvent(prev, event));
     });
 
     try {

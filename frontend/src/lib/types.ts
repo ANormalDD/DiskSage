@@ -56,6 +56,8 @@ export interface LLMConfig {
   base_url: string;
   max_tokens: number;
   max_turns: number;
+  request_timeout_seconds: number;
+  enable_streaming: boolean;
   enable_web_search: boolean;
   tavily_api_key: string;
   tavily_base_url: string;

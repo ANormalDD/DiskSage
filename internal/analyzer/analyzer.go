@@ -17,11 +17,17 @@ import (
 )
 
 type LLMRequest struct {
-	System     string
-	User       string
-	Tools      []ToolDefinition
-	ToolChoice string
-	Config     models.LLMConfig
+	System        string
+	User          string
+	Tools         []ToolDefinition
+	ToolChoice    string
+	Config        models.LLMConfig
+	OnStreamDelta func(delta LLMStreamDelta)
+}
+
+type LLMStreamDelta struct {
+	Content   string
+	Reasoning string
 }
 
 type LLMResponse struct {
@@ -274,12 +280,23 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 		}
 
 		turnUser := buildTurnUserPrompt(session.User, session.CtxNotes)
+		streamedAny := false
 		resp, err := client.Complete(ctx, LLMRequest{
 			System:     session.System,
 			User:       turnUser,
 			Tools:      BuildToolDefinitions(cfg),
 			ToolChoice: session.ToolChoice,
 			Config:     cfg,
+			OnStreamDelta: func(delta LLMStreamDelta) {
+				if strings.TrimSpace(delta.Reasoning) != "" {
+					streamedAny = true
+					a.emitProgress(AnalysisProgressEvent{Type: "reasoning", Turn: turn, Content: "模型推理（流式）", Reason: truncateProgressText(delta.Reasoning, 12000)})
+				}
+				if strings.TrimSpace(delta.Content) != "" {
+					streamedAny = true
+					a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: truncateProgressText(delta.Content, 12000)})
+				}
+			},
 		})
 		analysisUsage = addUsage(analysisUsage, resp.Usage)
 		if err != nil {
@@ -307,10 +324,10 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 		} else if content != "" {
 			session.RawOutputs = append(session.RawOutputs, fmt.Sprintf("[turn-%d parsed-content]\n%s", turn, content))
 		}
-		if reasoning != "" {
+		if reasoning != "" && !streamedAny {
 			a.emitProgress(AnalysisProgressEvent{Type: "reasoning", Turn: turn, Content: "模型推理", Reason: truncateProgressText(reasoning, 12000)})
 		}
-		if content != "" {
+		if content != "" && !streamedAny {
 			a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: truncateProgressText(content, 12000)})
 		}
 
