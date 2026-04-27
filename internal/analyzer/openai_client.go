@@ -63,12 +63,15 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, req LLMRequest) (
 		body["max_tokens"] = req.Config.MaxTokens
 	}
 	payload, _ := json.Marshal(body)
-	timeout := resolveLLMTimeout(req.Config)
+	timeout := resolveLLMTimeout(req.Config, req.Config.EnableStreaming)
 
 	raw, statusCode, err := c.doChatCompletion(ctx, base+"/chat/completions", req.Config.APIKey, payload, timeout, req.Config.EnableStreaming, req.OnStreamDelta)
 	if err != nil {
 		if isTimeoutErr(err) {
-			return LLMResponse{}, fmt.Errorf("llm request timeout after %s, please check network/base_url: %w", timeout.String(), err)
+			if timeout > 0 {
+				return LLMResponse{}, fmt.Errorf("llm request timeout after %s, please check network/base_url: %w", timeout.String(), err)
+			}
+			return LLMResponse{}, fmt.Errorf("llm streaming request timed out or was interrupted, please check network/base_url: %w", err)
 		}
 		return LLMResponse{}, err
 	}
@@ -322,7 +325,10 @@ func toOpenAITools(defs []ToolDefinition) []map[string]any {
 	return tools
 }
 
-func resolveLLMTimeout(cfg models.LLMConfig) time.Duration {
+func resolveLLMTimeout(cfg models.LLMConfig, stream bool) time.Duration {
+	if stream {
+		return 0
+	}
 	if cfg.RequestTimeoutSeconds <= 0 {
 		return defaultLLMTimeout
 	}

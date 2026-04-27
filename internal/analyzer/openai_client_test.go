@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"disksage/internal/models"
 )
@@ -576,6 +577,39 @@ func TestOpenAIClientStreamingPreservesWhitespaceChunks(t *testing.T) {
 		t.Fatalf("unexpected stream delta content: %q", deltaContent)
 	}
 	if resp.Content != "A B\nC" {
+		t.Fatalf("unexpected streamed content: %q", resp.Content)
+	}
+}
+
+func TestOpenAIClientStreamingIgnoresConfiguredRequestTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(1200 * time.Millisecond)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"B\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:                "k",
+			BaseURL:               server.URL,
+			Model:                 "m",
+			EnableStreaming:       true,
+			RequestTimeoutSeconds: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if resp.Content != "AB" {
 		t.Fatalf("unexpected streamed content: %q", resp.Content)
 	}
 }
