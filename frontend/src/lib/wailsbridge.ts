@@ -164,7 +164,7 @@ export async function cleanSelected(items: Recommendation[]): Promise<CleanSumma
       Command: item.command,
       Risk: item.risk,
     })),
-    PermanentDelete: false,
+    PermanentDelete: true,
     ConfirmCommands: true,
     RequestedBy: "frontend",
   };

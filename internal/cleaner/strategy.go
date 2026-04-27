@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"disksage/internal/models"
 )
@@ -32,24 +30,12 @@ var redirectDeleteFallback DeleteStrategy
 
 func (s DeleteStrategy) Execute(ctx context.Context, item models.Recommendation, opts ExecuteOptions) (int64, error) {
 	_ = ctx
+	_ = opts
 	if item.Path == "" {
 		return 0, fmt.Errorf("empty path")
 	}
-	if opts.PermanentDelete {
-		if err := os.RemoveAll(item.Path); err != nil {
-			return 0, err
-		}
-		return item.Size, nil
-	}
-	trashRoot := filepath.Join(os.TempDir(), "disksage", "recycle")
-	if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+	if err := os.RemoveAll(item.Path); err != nil {
 		return 0, err
-	}
-	dest := filepath.Join(trashRoot, fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(item.Path)))
-	if err := os.Rename(item.Path, dest); err != nil {
-		if err2 := os.RemoveAll(item.Path); err2 != nil {
-			return 0, err
-		}
 	}
 	return item.Size, nil
 }
