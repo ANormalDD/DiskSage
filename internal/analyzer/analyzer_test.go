@@ -389,8 +389,8 @@ func TestAnalyzerContinueCarriesInterruptedStreamingOutputIntoNextTurn(t *testin
 	if !strings.Contains(resumePrompt, "已发现 Downloads 下有大文件") {
 		t.Fatalf("expected resume prompt to include partial assistant output, got: %s", resumePrompt)
 	}
-	if !strings.Contains(resumePrompt, "先检查下载目录") {
-		t.Fatalf("expected resume prompt to include partial reasoning, got: %s", resumePrompt)
+	if strings.Contains(resumePrompt, "先检查下载目录") {
+		t.Fatalf("expected resume prompt to exclude partial reasoning, got: %s", resumePrompt)
 	}
 }
 

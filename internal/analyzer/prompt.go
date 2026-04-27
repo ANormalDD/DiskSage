@@ -29,6 +29,7 @@ const defaultSystemPrompt = `你是磁盘清理助手。分析目录树，识别
 {{SEARCH_TOOL_GUIDE}}- check_dir_content 的返回包含 Path、CreatedAt、ModifiedAt、Stats；请结合 CreatedAt/ModifiedAt 判断是否为长期未使用的旧目录
 - 如果有多个候选目录需要取证，请在同一轮一次性调用多个工具（multi tool calls）
 - 若工具返回错误（路径不存在、权限不足、参数不合法），请根据错误修正参数并继续调用工具，不要结束分析
+- 不要把分类、候选列表或阶段性结论只放在 reasoning 中；凡是后续决策还需要依赖的中间结论，必须写入 content 或通过工具结果体现，避免下一轮重复分类
 - 完成分析后，必须调用 submit_recommendations 提交最终结果
 - 最终提交阶段禁止在 content 输出长文本总结；请直接调用 submit_recommendations
 - submit_recommendations 的 arguments 必须是严格 JSON：{"recommendations":[...]}
