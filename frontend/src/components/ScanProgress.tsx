@@ -179,11 +179,21 @@ function buildTurns(llmOps: AnalyzeProgressEvent[]): Array<{ turn: number; bucke
     }
 
     if (op.type === "reasoning") {
-      bucket.reasonings.push(op);
+      if (bucket.reasonings.length === 0) {
+        bucket.reasonings.push(op);
+      } else {
+        const last = bucket.reasonings[bucket.reasonings.length - 1];
+        last.reason = (last.reason || "") + (op.reason || "");
+      }
       return;
     }
     if (op.type === "assistant_text") {
-      bucket.texts.push(op);
+      if (bucket.texts.length === 0) {
+        bucket.texts.push(op);
+      } else {
+        const last = bucket.texts[bucket.texts.length - 1];
+        last.content = (last.content || "") + (op.content || "");
+      }
       return;
     }
     if (op.type === "tool_call") {
