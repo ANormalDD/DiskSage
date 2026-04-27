@@ -112,7 +112,7 @@ func TestExecuteToolCallsTavilyErrorIsRecoverable(t *testing.T) {
 		Arguments: []byte(`{"query":"unknown app folder"}`),
 	}}
 
-	results, recs, err := executeToolCalls(context.Background(), calls, nil, nil, models.LLMConfig{}, nil)
+	results, recs, _, err := executeToolCalls(context.Background(), calls, nil, nil, models.LLMConfig{}, nil)
 	if err != nil {
 		t.Fatalf("expected recoverable tavily error, got err: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestExecuteToolCallsTavilyErrorIsRecoverable(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected one tool result, got %d", len(results))
 	}
-	if !strings.Contains(results[0], "tavily_search error") {
-		t.Fatalf("expected tavily error result, got: %s", results[0])
+	if !strings.Contains(results[0].Output, "tavily_search error") {
+		t.Fatalf("expected tavily error result, got: %s", results[0].Output)
 	}
 }

@@ -12,6 +12,7 @@ const (
 	ToolCheckDirContent       = "check_dir_content"
 	ToolTavilySearch          = "tavily_search"
 	ToolSubmitRecommendations = "submit_recommendations"
+	ToolFinishAnalysis        = "finish_analysis"
 )
 
 type ToolDefinition struct {
@@ -82,13 +83,22 @@ func BuildToolDefinitions(cfg models.LLMConfig) []ToolDefinition {
 	tools = append(tools,
 		ToolDefinition{
 			Name:        ToolSubmitRecommendations,
-			Description: "Submit final cleanup recommendations",
+			Description: "Incrementally submit a batch of cleanup recommendations. Can be called multiple times during analysis to accumulate results. Does NOT end the analysis.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"recommendations": map[string]any{"type": "array"},
 				},
 				"required": []string{"recommendations"},
+			},
+		},
+		ToolDefinition{
+			Name:        ToolFinishAnalysis,
+			Description: "Signal that analysis is complete. Call this after all submit_recommendations calls are done. No parameters required.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{},
+				"required":   []string{},
 			},
 		},
 	)

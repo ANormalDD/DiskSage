@@ -382,15 +382,23 @@ func TestAnalyzerContinueCarriesInterruptedStreamingOutputIntoNextTurn(t *testin
 		t.Fatalf("expected 2 requests, got %d", len(client.capturedReq))
 	}
 
-	resumePrompt := client.capturedReq[1].User
+	// In the new multi-turn design, the interrupted stream note is injected as a user
+	// ConversationMessage. Verify the second request's Messages slice contains it.
+	secondReq := client.capturedReq[1]
+	var resumeContent strings.Builder
+	for _, m := range secondReq.Messages {
+		resumeContent.WriteString(m.Content)
+		resumeContent.WriteString(" ")
+	}
+	resumePrompt := resumeContent.String()
 	if !strings.Contains(resumePrompt, "流式输出在中断前已经收到部分内容") {
-		t.Fatalf("expected resume prompt to mention interrupted stream, got: %s", resumePrompt)
+		t.Fatalf("expected resume messages to mention interrupted stream, got: %s", resumePrompt)
 	}
 	if !strings.Contains(resumePrompt, "已发现 Downloads 下有大文件") {
-		t.Fatalf("expected resume prompt to include partial assistant output, got: %s", resumePrompt)
+		t.Fatalf("expected resume messages to include partial assistant output, got: %s", resumePrompt)
 	}
 	if strings.Contains(resumePrompt, "先检查下载目录") {
-		t.Fatalf("expected resume prompt to exclude partial reasoning, got: %s", resumePrompt)
+		t.Fatalf("expected resume messages to exclude partial reasoning, got: %s", resumePrompt)
 	}
 }
 
@@ -490,8 +498,14 @@ func TestAnalyzerResolvesSizeFromClientScan(t *testing.T) {
 					Arguments: []byte(`{"recommendations":[{"path":"D:/payload","category":"confirm","reason":"x","clean_method":"recycle","command":"","risk":"low"}]}`),
 				}},
 			},
+			{
+				ToolCalls: []ToolCall{{
+					Name:      ToolFinishAnalysis,
+					Arguments: []byte(`{}`),
+				}},
+			},
 		},
-		errs: []error{nil},
+		errs: []error{nil, nil},
 	}
 
 	a := NewAnalyzer(Options{

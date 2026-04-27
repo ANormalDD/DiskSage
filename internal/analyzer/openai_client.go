@@ -41,12 +41,54 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, req LLMRequest) (
 		return LLMResponse{}, fmt.Errorf("missing base url")
 	}
 
-	body := map[string]any{
-		"model": req.Config.Model,
-		"messages": []map[string]string{
+	var messages []map[string]any
+	if len(req.Messages) > 0 {
+		// Build full multi-turn history: system + all conversation messages.
+		messages = make([]map[string]any, 0, 1+len(req.Messages))
+		messages = append(messages, map[string]any{"role": "system", "content": req.System})
+		for _, m := range req.Messages {
+			switch m.Role {
+			case "assistant":
+				entry := map[string]any{"role": "assistant", "content": m.Content}
+				if m.ReasoningContent != "" {
+					entry["reasoning_content"] = m.ReasoningContent
+				}
+				if len(m.ToolCalls) > 0 {
+					tcItems := make([]map[string]any, 0, len(m.ToolCalls))
+					for idx, tc := range m.ToolCalls {
+						tcItems = append(tcItems, map[string]any{
+							"id":   fmt.Sprintf("call_%d", idx),
+							"type": "function",
+							"function": map[string]any{
+								"name":      tc.Name,
+								"arguments": string(tc.Arguments),
+							},
+						})
+					}
+					entry["tool_calls"] = tcItems
+				}
+				messages = append(messages, entry)
+			case "tool":
+				messages = append(messages, map[string]any{
+					"role":         "tool",
+					"tool_call_id": m.ToolCallID,
+					"name":         m.Name,
+					"content":      m.Content,
+				})
+			default:
+				messages = append(messages, map[string]any{"role": m.Role, "content": m.Content})
+			}
+		}
+	} else {
+		messages = []map[string]any{
 			{"role": "system", "content": req.System},
 			{"role": "user", "content": req.User},
-		},
+		}
+	}
+
+	body := map[string]any{
+		"model":    req.Config.Model,
+		"messages": messages,
 	}
 	if req.Config.EnableStreaming {
 		body["stream"] = true
@@ -417,7 +459,7 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 	plainLines := make([]string, 0, 16)
 	seenSSEData := false
 	contentParts := make([]string, 0, 64)
-	reasoningParts := make([]string, 0, 16)
+	var reasoningBuf strings.Builder
 	usage := map[string]any{}
 	toolCallBuilders := make(map[int]*streamedToolCallBuilder)
 	orderCounter := 0
@@ -461,13 +503,13 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 			}
 
 			if reasoningPiece := extractContent(delta["reasoning"]); reasoningPiece != "" {
-				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
+				reasoningBuf.WriteString(reasoningPiece)
 				if onStreamDelta != nil {
 					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
 				}
 			}
 			if reasoningPiece := extractContent(delta["reasoning_content"]); reasoningPiece != "" {
-				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
+				reasoningBuf.WriteString(reasoningPiece)
 				if onStreamDelta != nil {
 					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
 				}
@@ -490,7 +532,7 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 						if candidate == "" {
 							continue
 						}
-						reasoningParts = appendUniqueText(reasoningParts, candidate)
+						reasoningBuf.WriteString(candidate)
 						if onStreamDelta != nil {
 							onStreamDelta(LLMStreamDelta{Reasoning: candidate})
 						}
@@ -600,8 +642,8 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 	message := map[string]any{
 		"content": strings.Join(contentParts, ""),
 	}
-	if len(reasoningParts) > 0 {
-		message["reasoning_content"] = strings.Join(reasoningParts, "\n")
+	if r := reasoningBuf.String(); r != "" {
+		message["reasoning_content"] = r
 	}
 	if len(toolCalls) > 0 {
 		items := make([]map[string]any, 0, len(toolCalls))
