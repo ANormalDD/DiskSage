@@ -447,20 +447,20 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 				continue
 			}
 
-			if piece := extractContent(delta["content"]); strings.TrimSpace(piece) != "" {
+			if piece := extractContent(delta["content"]); piece != "" {
 				contentParts = append(contentParts, piece)
 				if onStreamDelta != nil {
 					onStreamDelta(LLMStreamDelta{Content: piece})
 				}
 			}
 
-			if reasoningPiece := extractContent(delta["reasoning"]); strings.TrimSpace(reasoningPiece) != "" {
+			if reasoningPiece := extractContent(delta["reasoning"]); reasoningPiece != "" {
 				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
 				if onStreamDelta != nil {
 					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
 				}
 			}
-			if reasoningPiece := extractContent(delta["reasoning_content"]); strings.TrimSpace(reasoningPiece) != "" {
+			if reasoningPiece := extractContent(delta["reasoning_content"]); reasoningPiece != "" {
 				reasoningParts = appendUniqueText(reasoningParts, reasoningPiece)
 				if onStreamDelta != nil {
 					onStreamDelta(LLMStreamDelta{Reasoning: reasoningPiece})
@@ -481,7 +481,7 @@ func parseStreamedChatCompletion(body io.Reader, onStreamDelta func(delta LLMStr
 						extractContent(p["reasoning_content"]),
 						extractContent(p["thinking"]),
 					} {
-						if strings.TrimSpace(candidate) == "" {
+						if candidate == "" {
 							continue
 						}
 						reasoningParts = appendUniqueText(reasoningParts, candidate)

@@ -540,3 +540,42 @@ func TestOpenAIClientStreamingInvokesDeltaCallback(t *testing.T) {
 		t.Fatalf("unexpected stream delta reasoning: %s", deltaReasoning)
 	}
 }
+
+func TestOpenAIClientStreamingPreservesWhitespaceChunks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" \"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"B\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"\\n\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"C\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient()
+	deltaContent := ""
+	resp, err := client.Complete(context.Background(), LLMRequest{
+		System: "sys",
+		User:   "user",
+		Config: models.LLMConfig{
+			APIKey:                "k",
+			BaseURL:               server.URL,
+			Model:                 "m",
+			EnableStreaming:       true,
+			RequestTimeoutSeconds: 120,
+		},
+		OnStreamDelta: func(delta LLMStreamDelta) {
+			deltaContent += delta.Content
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if deltaContent != "A B\nC" {
+		t.Fatalf("unexpected stream delta content: %q", deltaContent)
+	}
+	if resp.Content != "A B\nC" {
+		t.Fatalf("unexpected streamed content: %q", resp.Content)
+	}
+}

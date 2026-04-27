@@ -288,11 +288,11 @@ func (a *Analyzer) runSession(ctx context.Context, session *analysisSession, cli
 			ToolChoice: session.ToolChoice,
 			Config:     cfg,
 			OnStreamDelta: func(delta LLMStreamDelta) {
-				if strings.TrimSpace(delta.Reasoning) != "" {
+				if delta.Reasoning != "" {
 					streamedAny = true
 					a.emitProgress(AnalysisProgressEvent{Type: "reasoning", Turn: turn, Content: "模型推理（流式）", Reason: truncateProgressText(delta.Reasoning, 12000)})
 				}
-				if strings.TrimSpace(delta.Content) != "" {
+				if delta.Content != "" {
 					streamedAny = true
 					a.emitProgress(AnalysisProgressEvent{Type: "assistant_text", Turn: turn, Content: truncateProgressText(delta.Content, 12000)})
 				}
@@ -523,14 +523,13 @@ func formatJSONForProgress(raw json.RawMessage) string {
 }
 
 func truncateProgressText(text string, maxLen int) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || maxLen <= 0 {
-		return trimmed
+	if text == "" || maxLen <= 0 {
+		return text
 	}
-	if len(trimmed) <= maxLen {
-		return trimmed
+	if len(text) <= maxLen {
+		return text
 	}
-	return trimmed[:maxLen] + "\n...(截断)"
+	return text[:maxLen] + "\n...(截断)"
 }
 
 func buildTurnUserPrompt(base string, notes []string) string {
